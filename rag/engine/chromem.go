@@ -18,7 +18,7 @@ type ChromemDB struct {
 	embeddingsModel string
 }
 
-func NewChromemDB(collection, path string, openaiClient *openai.Client, embeddingsModel string) (*ChromemDB, error) {
+func NewChromemDBCollection(collection, path string, openaiClient *openai.Client, embeddingsModel string) (*ChromemDB, error) {
 	db, err := chromem.NewPersistentDB(path, true)
 	if err != nil {
 		return nil, err

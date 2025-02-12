@@ -102,8 +102,10 @@ func splitParagraphIntoChunks(paragraph string, maxChunkSize int) []string {
 	return chunks
 }
 
-func chunkFileOrContent(f string, maxchunksize int) ([]string, error) {
-	if _, err := os.Stat(f); os.IsNotExist(err) {
+func chunkFileOrContent(f, assetDir string, maxchunksize int) ([]string, error) {
+	fpath := filepath.Join(assetDir, f)
+
+	if _, err := os.Stat(fpath); os.IsNotExist(err) {
 		xlog.Error("File does not exist, treating as text content: ", f)
 		return splitParagraphIntoChunks(f, maxchunksize), nil
 	}
@@ -112,10 +114,10 @@ func chunkFileOrContent(f string, maxchunksize int) ([]string, error) {
 	// If it's a .txt file, read the file and split it into chunks.
 	// If it's a .pdf file, convert it to text and split it into chunks.
 	// ...
-	extension := filepath.Ext(f)
+	extension := filepath.Ext(fpath)
 	switch extension {
 	case ".txt":
-		f, err := os.Open(f)
+		f, err := os.Open(fpath)
 		if err != nil {
 			xlog.Error("Error opening file: ", f)
 			return nil, err

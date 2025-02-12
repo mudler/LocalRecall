@@ -2,6 +2,7 @@ package rag
 
 import (
 	"encoding/json"
+	"path/filepath"
 
 	"os"
 	"sync"
@@ -12,6 +13,7 @@ type PersistentKB struct {
 	sync.Mutex
 	Files        []string
 	path         string
+	assetDir     string
 	maxChunkSize int
 }
 
@@ -26,18 +28,21 @@ func loadDB(path string) ([]string, error) {
 	return poolData, err
 }
 
-func NewPersistentKB(stateFile string, store Engine, maxChunkSize int) (*PersistentKB, error) {
-	// if file exists, try to load an existing pool.
-	// if file does not exist, create a new pool.
+func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize int) (*PersistentKB, error) {
+	// if file exists, try to load an existing state
+	// if file does not exist, create a new state
 
 	if _, err := os.Stat(stateFile); err != nil {
-		// file does not exist, return a new pool
-		return &PersistentKB{
+		persistentKB := &PersistentKB{
 			Files:        []string{},
 			path:         stateFile,
 			Engine:       store,
+			assetDir:     assetDir,
 			maxChunkSize: maxChunkSize,
-		}, nil
+		}
+		persistentKB.Lock()
+		defer persistentKB.Unlock()
+		return persistentKB, persistentKB.save()
 	}
 
 	poolData, err := loadDB(stateFile)
@@ -49,6 +54,7 @@ func NewPersistentKB(stateFile string, store Engine, maxChunkSize int) (*Persist
 		Files:        poolData,
 		path:         stateFile,
 		maxChunkSize: maxChunkSize,
+		assetDir:     assetDir,
 	}
 
 	return db, nil
@@ -96,7 +102,16 @@ func (db *PersistentKB) Store(entry string) error {
 	defer db.Unlock()
 	db.Files = append(db.Files, entry)
 
-	if err := db.store(entry); err != nil {
+	e := entry
+	// copy file to assetDir (if it's a file)
+	if _, err := os.Stat(entry); err == nil {
+		if err := copyFile(entry, db.assetDir); err != nil {
+			return err
+		}
+		e = filepath.Base(entry)
+	}
+
+	if err := db.store(e); err != nil {
 		return err
 	}
 
@@ -105,7 +120,7 @@ func (db *PersistentKB) Store(entry string) error {
 
 func (db *PersistentKB) store(fileOrContent ...string) error {
 	for _, c := range fileOrContent {
-		pieces, err := chunkFileOrContent(c, db.maxChunkSize)
+		pieces, err := chunkFileOrContent(c, db.assetDir, db.maxChunkSize)
 		if err != nil {
 			return err
 		}
@@ -131,4 +146,12 @@ func (db *PersistentKB) RemoveEntry(entry string) error {
 	db.Unlock()
 
 	return db.ReInit()
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dst, filepath.Base(src)), in, 0644)
 }
