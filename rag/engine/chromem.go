@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/mudler/localrag/rag/types"
 	"github.com/philippgille/chromem-go"
 	"github.com/sashabaranov/go-openai"
 )
@@ -97,16 +98,22 @@ func (c *ChromemDB) Store(s string) error {
 	}, runtime.NumCPU())
 }
 
-func (c *ChromemDB) Search(s string, similarEntries int) ([]string, error) {
+func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error) {
 	res, err := c.collection.Query(context.Background(), s, similarEntries, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var results []string
+	var results []types.Result
 
 	for _, r := range res {
-		results = append(results, r.Content)
+		results = append(results, types.Result{
+			ID:       r.ID,
+			Metadata: r.Metadata,
+			Content:  r.Content,
+
+			Similarity: r.Similarity,
+		})
 	}
 
 	return results, nil

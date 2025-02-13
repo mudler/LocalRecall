@@ -1,0 +1,26 @@
+services:
+  localai:
+    image: quay.io/go-skynet/local-ai:master-ffmpeg-core
+    ports:
+      - 8081:8080
+    environment:
+      - MODELS_PATH=/models
+    #  - DEBUG=true
+    volumes:
+      - ./volumes/models:/models:cached
+      - ./volumes/images/:/tmp/generated/images/
+    command:
+    - bert-embeddings
+  ragserver:
+    image: quay.io/mudler/localrag
+    ports:
+      - 8080:8080
+    environment:
+      - COLLECTION_DB_PATH=/db
+      - EMBEDDING_MODEL=bert-embeddings
+      - FILE_ASSETS=/assets
+      - OPENAI_API_KEY=sk-1234567890
+      - OPENAI_BASE_URL=http://localai:8081
+    volumes:
+      - ./volumes/db:/db
+      - ./volumes/assets/:/assets

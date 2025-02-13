@@ -16,28 +16,40 @@
 <input type="text" id="upload-collection-name" placeholder="Enter collection name">
 <input type="file" id="file-input">
 <button onclick="uploadFile()">Upload</button>
+<h2>Query Collection</h2>
+<input type="text" id="query-collection-name" placeholder="Enter collection name">
+<input type="text" id="query" placeholder="Enter query">
+<button onclick="queryCollection()">Query</button>
 <script>
     async function createCollection() {
-    const name = document.getElementById('collection-name').value;
-    const response = await fetch('/api/collections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-    });
-    alert(await response.text());
+        const name = document.getElementById('collection-name').value;
+        const response = await fetch('/api/collections', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        alert(await response.text());
     }
 
     async function uploadFile() {
-    const name = document.getElementById('upload-collection-name').value;
-    const fileInput = document.getElementById('file-input');
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
+        const name = document.getElementById('upload-collection-name').value;
+        const fileInput = document.getElementById('file-input');
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
 
-    const response = await fetch(`/api/collections/${name}/upload`, {
-        method: 'POST',
-        body: formData
-    });
-    alert(await response.text());
+        const response = await fetch(`/api/collections/${name}/upload`, {
+            method: 'POST',
+            body: formData
+        });
+        alert(await response.text());
+    }
+
+    async function queryCollection() {
+        const name = document.getElementById('query-collection-name').value;
+        const query = document.getElementById('query').value;
+        const response = await fetch(`/api/collections/${name}/query?q=${query}`);
+        const data = await response.json();
+        alert(JSON.stringify(data, null, 2));
     }
 </script>
 </body>
