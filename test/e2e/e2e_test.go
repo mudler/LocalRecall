@@ -101,7 +101,7 @@ var _ = Describe("API", func() {
 		Expect(collections).To(ContainElement(testCollection))
 	})
 
-	It("should create documents", func() {
+	It("should search between documents", func() {
 		err := localRAG.CreateCollection(testCollection)
 		Expect(err).ToNot(HaveOccurred())
 
