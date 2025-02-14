@@ -62,6 +62,7 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 
 func (db *PersistentKB) Reset() error {
 	db.Lock()
+	// TODO: should we delete file first?
 	db.Files = []string{}
 	db.save()
 	db.Unlock()

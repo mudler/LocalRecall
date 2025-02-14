@@ -48,11 +48,11 @@ func (c *ChromemDB) Count() int {
 
 func (c *ChromemDB) Reset() error {
 	if err := c.db.DeleteCollection(c.collectionName); err != nil {
-		return err
+		return fmt.Errorf("error deleting collection: %v", err)
 	}
 	collection, err := c.db.GetOrCreateCollection(c.collectionName, nil, c.embedding())
 	if err != nil {
-		return err
+		return fmt.Errorf("error creating collection: %v", err)
 	}
 	c.collection = collection
 

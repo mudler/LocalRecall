@@ -107,6 +107,30 @@ func (c *Client) Search(collection, query string, maxResults int) ([]types.Resul
 	return results, nil
 }
 
+func (c *Client) Reset(collection string) error {
+	url := fmt.Sprintf("%s/api/collections/%s/reset", c.BaseURL, collection)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b := new(bytes.Buffer)
+		b.ReadFrom(resp.Body)
+
+		return errors.New("failed to reset collection: " + b.String())
+	}
+
+	return nil
+}
+
 // Store uploads a file to a collection
 func (c *Client) Store(collection, filePath string) error {
 	url := fmt.Sprintf("%s/api/collections/%s/upload", c.BaseURL, collection)
@@ -149,6 +173,19 @@ func (c *Client) Store(collection, filePath string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		b := new(bytes.Buffer)
+		b.ReadFrom(resp.Body)
+
+		type response struct {
+			Error string `json:"error"`
+		}
+
+		var r response
+		err = json.Unmarshal(b.Bytes(), &r)
+		if err == nil {
+			return errors.New("failed to upload file: " + r.Error)
+		}
+
 		return errors.New("failed to upload file")
 	}
 

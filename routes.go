@@ -41,6 +41,7 @@ func startAPI(listenAddress string) {
 	e.POST("/api/collections/:name/upload", uploadFile(collections, fileAssets))
 	e.GET("/api/collections", listCollections)
 	e.POST("/api/collections/:name/search", search(collections))
+	e.POST("/api/collections/:name/reset", reset(collections))
 
 	e.Logger.Fatal(e.Start(listenAddress))
 }
@@ -59,6 +60,18 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 
 		collections[r.Name] = rag.NewPersistentChromeCollection(client, r.Name, collectionDBPath, assetDir, embeddingModel)
 		return c.JSON(http.StatusCreated, collections[r.Name])
+	}
+}
+
+func reset(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+		}
+
+		return collection.Reset()
 	}
 }
 
@@ -95,48 +108,52 @@ func search(collections collectionList) func(c echo.Context) error {
 	}
 }
 
+func errorMessage(message string) map[string]string {
+	return map[string]string{"error": message}
+}
+
 // uploadFile handles uploading files to a collection
 func uploadFile(collections collectionList, fileAssets string) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
 		}
 
 		file, err := c.FormFile("file")
 		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Failed to read file"})
+			return c.JSON(http.StatusBadRequest, errorMessage("Failed to read file: "+err.Error()))
 		}
 
 		f, err := file.Open()
 		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Failed to open file"})
+			return c.JSON(http.StatusBadRequest, errorMessage("Failed to open file: "+err.Error()))
 		}
 		defer f.Close()
 
 		tempDir, err := os.MkdirTemp("", "upload")
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create temporary directory"})
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create temporary directory"))
 		}
 		defer os.RemoveAll(tempDir)
 
 		filePath := tempDir + "/" + file.Filename
 		out, err := os.Create(filePath)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create file"})
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create file"))
 		}
 		defer out.Close()
 
 		_, err = io.Copy(out, f)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to copy file"})
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to copy file"))
 		}
 
 		// Save the file to disk
 		err = collection.Store(filePath)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to store file"})
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to store file: "+err.Error()))
 		}
 
 		return c.JSON(http.StatusOK, collection)
