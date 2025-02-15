@@ -2,6 +2,10 @@ package main
 
 import (
 	"os"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	"github.com/sashabaranov/go-openai"
 )
 
 var (
@@ -25,6 +29,22 @@ func init() {
 		listeningAddress = ":8080"
 	}
 
+}
+
+func startAPI(listenAddress string) {
+	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+
+	config := openai.DefaultConfig(openAIKey)
+	config.BaseURL = openAIBaseURL
+
+	openAIClient := openai.NewClientWithConfig(config)
+
+	registerStaticHandler(e)
+	registerAPIRoutes(e, openAIClient)
+
+	e.Logger.Fatal(e.Start(listenAddress))
 }
 
 func main() {

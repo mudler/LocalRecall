@@ -1,7 +1,6 @@
 package main
 
 import (
-	"embed"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,35 +8,24 @@ import (
 	"path/filepath"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/mudler/localrag/pkg/xlog"
 	"github.com/mudler/localrag/rag"
 	"github.com/sashabaranov/go-openai"
 )
-
-//go:embed static/*
-var staticFiles embed.FS
 
 type collectionList map[string]*rag.PersistentKB
 
 var collections = collectionList{}
 
-func startAPI(listenAddress string) {
-	e := echo.New()
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
+// API routes for managing collections
+func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client) {
 
-	config := openai.DefaultConfig(openAIKey)
-	config.BaseURL = openAIBaseURL
+	// Load all collections
+	colls := rag.ListAllCollections(collectionDBPath)
+	for _, c := range colls {
+		collections[c] = rag.NewPersistentChromeCollection(openAIClient, c, collectionDBPath, fileAssets, embeddingModel)
+	}
 
-	openAIClient := openai.NewClientWithConfig(config)
-
-	// Serve static files for the web UI
-	e.GET("/", func(c echo.Context) error {
-		return c.File("static/index.html")
-	})
-	e.GET("/static/*", echo.WrapHandler(http.FileServer(http.FS(staticFiles))))
-
-	// API routes for managing collections
 	e.POST("/api/collections", createCollection(collections, openAIClient, embeddingModel, fileAssets))
 	e.POST("/api/collections/:name/upload", uploadFile(collections, fileAssets))
 	e.GET("/api/collections", listCollections)
@@ -45,8 +33,6 @@ func startAPI(listenAddress string) {
 	e.POST("/api/collections/:name/search", search(collections))
 	e.POST("/api/collections/:name/reset", reset(collections))
 	e.DELETE("/api/collections/:name/entry/delete", delete(collections))
-
-	e.Logger.Fatal(e.Start(listenAddress))
 }
 
 // createCollection handles creating a new collection
@@ -58,7 +44,7 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
 		}
 
 		collections[r.Name] = rag.NewPersistentChromeCollection(client, r.Name, collectionDBPath, assetDir, embeddingModel)
@@ -71,7 +57,7 @@ func delete(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
 		}
 
 		type request struct {
@@ -80,11 +66,11 @@ func delete(collections collectionList) func(c echo.Context) error {
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
 		}
 
 		if err := collection.RemoveEntry(r.Entry); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to remove entry"})
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to remove entry"))
 		}
 
 		return c.JSON(http.StatusOK, collection.ListEntries())
@@ -96,7 +82,7 @@ func reset(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
 		}
 
 		return collection.Reset()
@@ -108,7 +94,7 @@ func search(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
 		}
 
 		type request struct {
@@ -118,7 +104,7 @@ func search(collections collectionList) func(c echo.Context) error {
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
 		}
 
 		fmt.Println(r)
@@ -129,7 +115,7 @@ func search(collections collectionList) func(c echo.Context) error {
 
 		results, err := collection.Search(r.Query, r.MaxResults)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to search collection"})
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to search collection: "+err.Error()))
 		}
 
 		return c.JSON(http.StatusOK, results)
@@ -145,7 +131,7 @@ func listFiles(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
 		}
 		return c.JSON(http.StatusOK, collection.ListEntries())
 	}
@@ -197,5 +183,3 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 func listCollections(c echo.Context) error {
 	return c.JSON(http.StatusOK, rag.ListAllCollections(collectionDBPath))
 }
-
-// Static files (in `static/index.html`) should contain the web UI layout for chatting and knowledge base management.

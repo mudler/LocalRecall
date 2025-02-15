@@ -105,6 +105,21 @@ func (db *PersistentKB) ListEntries() []string {
 	return db.files
 }
 
+func (db *PersistentKB) EntryExists(entry string) bool {
+	db.Lock()
+	defer db.Unlock()
+
+	entry = filepath.Base(entry)
+
+	for _, e := range db.files {
+		if e == entry {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Store stores an entry in the persistent knowledge base.
 func (db *PersistentKB) Store(entry string) error {
 	db.Lock()
