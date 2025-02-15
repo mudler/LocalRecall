@@ -1,56 +1,195 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>Web UI</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collection Manager</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
-<body>
-<h1>Chat Interface</h1>
-<textarea id="chat-box" rows="10" cols="50" placeholder="Start chatting..."></textarea>
-<br><br>
-<h1>Knowledge Base Management</h1>
-<h2>Create Collection</h2>
-<input type="text" id="collection-name" placeholder="Enter collection name">
-<button onclick="createCollection()">Create</button>
-<h2>Upload File to Collection</h2>
-<input type="text" id="upload-collection-name" placeholder="Enter collection name">
-<input type="file" id="file-input">
-<button onclick="uploadFile()">Upload</button>
-<h2>Query Collection</h2>
-<input type="text" id="query-collection-name" placeholder="Enter collection name">
-<input type="text" id="query" placeholder="Enter query">
-<button onclick="queryCollection()">Query</button>
-<script>
-    async function createCollection() {
-        const name = document.getElementById('collection-name').value;
-        const response = await fetch('/api/collections', {
+<body class="bg-gray-100 font-sans leading-normal tracking-normal">
+  <div class="container mx-auto p-4" x-data="collectionManager()">
+    <h1 class="text-3xl font-bold mb-4">Collection Manager</h1>
+
+    <!-- Create Collection Section -->
+    <div class="mb-6 p-4 bg-white rounded-lg shadow">
+      <h2 class="text-xl font-semibold mb-2">Create Collection</h2>
+      <input type="text" placeholder="Collection Name" x-model="newCollectionName" class="border p-2 rounded w-full mb-2">
+      <button @click="createCollection" class="bg-blue-500 hover:bg-blue-700 text-white py-2 px-4 rounded">Create</button>
+    </div>
+
+    <!-- Upload File Section -->
+    <div class="mb-6 p-4 bg-white rounded-lg shadow">
+      <h2 class="text-xl font-semibold mb-2">Upload File to Collection</h2>
+      <div class="flex items-center space-x-2">
+        <select x-model="selectedCollection" class="border p-2 rounded">
+          <option value="" disabled>Select a Collection</option>
+          <template x-for="collection in collections" :key="collection">
+            <option :value="collection" x-text="collection"></option>
+          </template>
+        </select>
+        <input type="file" id="fileUpload" class="border p-2 rounded">
+        <button @click="uploadFile" class="bg-green-500 hover:bg-green-700 text-white py-2 px-4 rounded">Upload</button>
+      </div>
+    </div>
+
+    <!-- List Collections Section -->
+    <div class="mb-6 p-4 bg-white rounded-lg shadow">
+      <h2 class="text-xl font-semibold mb-2">Collections</h2>
+      <ul>
+        <template x-for="collection in collections" :key="collection">
+          <li class="mb-1 p-2 bg-gray-200 rounded" x-text="collection"></li>
+        </template>
+      </ul>
+    </div>
+
+    <!-- List Entries in Collection Section -->
+    <div class="mb-6 p-4 bg-white rounded-lg shadow">
+      <h2 class="text-xl font-semibold mb-2">List Entries in Collection</h2>
+      <div class="flex items-center space-x-2">
+        <select x-model="selectedListCollection" @change="listEntries" class="border p-2 rounded">
+          <option value="" disabled>Select a Collection</option>
+          <template x-for="collection in collections" :key="collection">
+            <option :value="collection" x-text="collection"></option>
+          </template>
+        </select>
+      </div>
+      <div class="mt-4">
+        <h3 class="font-bold">Entries:</h3>
+        <ul>
+          <template x-for="entry in entries" :key="entry">
+            <li class="mb-1 p-2 bg-gray-200 rounded flex justify-between items-center">
+              <span x-text="entry"></span>
+              <button @click="deleteEntry(entry)" class="bg-red-500 hover:bg-red-700 text-white py-1 px-2 rounded">Delete</button>
+            </li>
+          </template>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Search Section -->
+    <div class="mb-6 p-4 bg-white rounded-lg shadow">
+      <h2 class="text-xl font-semibold mb-2">Search Collection</h2>
+      <div class="flex items-center space-x-2">
+        <select x-model="selectedSearchCollection" class="border p-2 rounded">
+          <option value="" disabled>Select a Collection</option>
+          <template x-for="collection in collections" :key="collection">
+            <option :value="collection" x-text="collection"></option>
+          </template>
+        </select>
+        <input type="text" placeholder="Search Query" x-model="searchQuery" class="border p-2 rounded w-full">
+        <button @click="searchCollection" class="bg-purple-500 hover:bg-purple-700 text-white py-2 px-4 rounded">Search</button>
+      </div>
+      <div class="mt-4">
+        <h3 class="font-bold">Search Results:</h3>
+        <ul>
+          <template x-for="result in searchResults" :key="result">
+            <li class="mb-1 p-2 bg-gray-200 rounded" x-text="result"></li>
+          </template>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function collectionManager() {
+      return {
+        newCollectionName: '',
+        selectedCollection: '',
+        selectedListCollection: '',
+        selectedSearchCollection: '',
+        searchQuery: '',
+        collections: [],
+        entries: [],
+        searchResults: [],
+
+        fetchCollections() {
+          fetch('/api/collections')
+            .then(response => response.json())
+            .then(data => {
+              this.collections = data;
+            })
+            .catch(error => console.error('Error fetching collections:', error));
+        },
+
+        createCollection() {
+          if (!this.newCollectionName) return alert('Please enter a collection name');
+
+          fetch('/api/collections', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
-        });
-        alert(await response.text());
-    }
+            body: JSON.stringify({ name: this.newCollectionName })
+          })
+            .then(response => response.json())
+            .then(() => {
+              this.newCollectionName = '';
+              this.fetchCollections();
+            })
+            .catch(error => console.error('Error creating collection:', error));
+        },
 
-    async function uploadFile() {
-        const name = document.getElementById('upload-collection-name').value;
-        const fileInput = document.getElementById('file-input');
-        const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
+        uploadFile() {
+          if (!this.selectedCollection) return alert('Please select a collection');
+          const fileInput = document.getElementById('fileUpload');
+          if (!fileInput.files.length) return alert('Please select a file');
 
-        const response = await fetch(`/api/collections/${name}/upload`, {
+          const formData = new FormData();
+          formData.append('file', fileInput.files[0]);
+
+          fetch(`/api/collections/${this.selectedCollection}/upload`, {
             method: 'POST',
             body: formData
-        });
-        alert(await response.text());
-    }
+          })
+            .then(() => alert('File uploaded successfully'))
+            .catch(error => console.error('Error uploading file:', error));
+        },
 
-    async function queryCollection() {
-        const name = document.getElementById('query-collection-name').value;
-        const query = document.getElementById('query').value;
-        const response = await fetch(`/api/collections/${name}/query?q=${query}`);
-        const data = await response.json();
-        alert(JSON.stringify(data, null, 2));
+        listEntries() {
+          if (!this.selectedListCollection) return;
+
+          fetch(`/api/collections/${this.selectedListCollection}/entries`)
+            .then(response => response.json())
+            .then(data => {
+              this.entries = data;
+            })
+            .catch(error => console.error('Error listing entries:', error));
+        },
+
+        deleteEntry(entry) {
+          if (!this.selectedListCollection) return alert('Please select a collection');
+
+          fetch(`/api/collections/${this.selectedListCollection}/entry/delete`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entry: entry })
+          })
+            .then(() => {
+              alert('Entry deleted successfully');
+              this.listEntries(); // Refresh the entries list
+            })
+            .catch(error => console.error('Error deleting entry:', error));
+        },
+
+        searchCollection() {
+          if (!this.selectedSearchCollection || !this.searchQuery) return alert('Please select a collection and enter a query');
+
+          fetch(`/api/collections/${this.selectedSearchCollection}/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: this.searchQuery, max_results: 5 })
+          })
+            .then(response => response.json())
+            .then(data => {
+              this.searchResults = data;
+            })
+            .catch(error => console.error('Error searching collection:', error));
+        },
+
+        init() {
+          this.fetchCollections();
+        }
+      };
     }
-</script>
+  </script>
 </body>
 </html>
