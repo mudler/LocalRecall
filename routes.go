@@ -169,6 +169,11 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to copy file"))
 		}
 
+		if collection.EntryExists(file.Filename) {
+			xlog.Info("Entry already exists")
+			return c.JSON(http.StatusBadRequest, errorMessage("Entry already exists"))
+		}
+
 		// Save the file to disk
 		err = collection.Store(filePath)
 		if err != nil {
