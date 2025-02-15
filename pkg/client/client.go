@@ -74,6 +74,73 @@ func (c *Client) ListCollections() ([]string, error) {
 	return collections, nil
 }
 
+// ListCollections lists all collections
+func (c *Client) ListEntries(collection string) ([]string, error) {
+	url := fmt.Sprintf("%s/api/collections/%s/entries", c.BaseURL, collection)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("failed to list collections")
+	}
+
+	var entries []string
+	err = json.NewDecoder(resp.Body).Decode(&entries)
+	if err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+// DeleteEntry deletes an Entry in a collection and return the entries left
+func (c *Client) DeleteEntry(collection, entry string) ([]string, error) {
+	url := fmt.Sprintf("%s/api/collections/%s/entry/delete", c.BaseURL, collection)
+
+	type request struct {
+		Entry string `json:"entry"`
+	}
+	client := &http.Client{}
+	payload, err := json.Marshal(request{Entry: entry})
+	if err != nil {
+		return nil, err
+	}
+
+	// Create request
+	req, err := http.NewRequest("DELETE", url, bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Fetch Request
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyResult := new(bytes.Buffer)
+		bodyResult.ReadFrom(resp.Body)
+		return nil, errors.New("failed to delete collection: " + bodyResult.String())
+	}
+
+	var results []string
+	err = json.NewDecoder(resp.Body).Decode(&results)
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
 // Search searches a collection
 func (c *Client) Search(collection, query string, maxResults int) ([]types.Result, error) {
 	url := fmt.Sprintf("%s/api/collections/%s/search", c.BaseURL, collection)

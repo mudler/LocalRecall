@@ -54,7 +54,6 @@ As Edgar headed home, tired but triumphant, he couldn’t help but smile. He had
 )
 
 var _ = Describe("API", func() {
-
 	var (
 		localAI  *openai.Client
 		localRAG *client.Client
@@ -126,9 +125,31 @@ var _ = Describe("API", func() {
 		Expect(docs).To(BeNil())
 		Expect(err.Error()).To(ContainSubstring("failed to search collection"))
 	})
+
+	It("should be able to delete documents", func() {
+		err := localRAG.CreateCollection(testCollection)
+		Expect(err).ToNot(HaveOccurred())
+
+		tempContent(story1, localRAG)
+		fileName := tempContent(story2, localRAG)
+
+		entries, err := localRAG.ListEntries(testCollection)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(entries).To(HaveLen(2))
+
+		expectContent("foo", "spiders", "Willowgrove", localRAG)
+		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
+
+		entry := fileName
+		entries, err = localRAG.DeleteEntry(testCollection, entry)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(entries).To(HaveLen(1))
+
+		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
+	})
 })
 
-func tempContent(content string, localRAG *client.Client) {
+func tempContent(content string, localRAG *client.Client) string {
 	// Create a temporary file
 	f, err := os.MkdirTemp("", "temp-content")
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
@@ -138,7 +159,9 @@ func tempContent(content string, localRAG *client.Client) {
 	hash.Write([]byte(content))
 	s := hash.Sum(nil)
 
-	ff, err := os.Create(filepath.Join(f, fmt.Sprintf("%x.txt", s)))
+	fileName := fmt.Sprintf("%x.txt", s)
+
+	ff, err := os.Create(filepath.Join(f, fileName))
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
 	_, err = ff.WriteString(content)
@@ -146,6 +169,8 @@ func tempContent(content string, localRAG *client.Client) {
 
 	err = localRAG.Store(testCollection, ff.Name())
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+	return fileName
 }
 
 func expectContent(collection, searchTerm, expected string, localRAG *client.Client) {

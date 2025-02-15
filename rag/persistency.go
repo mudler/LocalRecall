@@ -11,7 +11,7 @@ import (
 type PersistentKB struct {
 	Engine
 	sync.Mutex
-	Files        []string
+	files        []string
 	path         string
 	assetDir     string
 	maxChunkSize int
@@ -34,7 +34,7 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 
 	if _, err := os.Stat(stateFile); err != nil {
 		persistentKB := &PersistentKB{
-			Files:        []string{},
+			files:        []string{},
 			path:         stateFile,
 			Engine:       store,
 			assetDir:     assetDir,
@@ -51,7 +51,7 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 	}
 	db := &PersistentKB{
 		Engine:       store,
-		Files:        poolData,
+		files:        poolData,
 		path:         stateFile,
 		maxChunkSize: maxChunkSize,
 		assetDir:     assetDir,
@@ -63,7 +63,7 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 func (db *PersistentKB) Reset() error {
 	db.Lock()
 	// TODO: should we delete file first?
-	db.Files = []string{}
+	db.files = []string{}
 	db.save()
 	db.Unlock()
 	if err := db.Engine.Reset(); err != nil {
@@ -73,7 +73,7 @@ func (db *PersistentKB) Reset() error {
 }
 
 func (db *PersistentKB) save() error {
-	data, err := json.Marshal(db.Files)
+	data, err := json.Marshal(db.files)
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func (db *PersistentKB) ReInit() error {
 		return err
 	}
 
-	if err := db.store(db.Files...); err != nil {
+	if err := db.store(db.files...); err != nil {
 		return err
 	}
 
@@ -98,10 +98,20 @@ func (db *PersistentKB) ReInit() error {
 }
 
 // Store stores an entry in the persistent knowledge base.
+func (db *PersistentKB) ListEntries() []string {
+	db.Lock()
+	defer db.Unlock()
+
+	return db.files
+}
+
+// Store stores an entry in the persistent knowledge base.
 func (db *PersistentKB) Store(entry string) error {
 	db.Lock()
 	defer db.Unlock()
-	db.Files = append(db.Files, entry)
+
+	fileName := filepath.Base(entry)
+	db.files = append(db.files, fileName)
 
 	e := entry
 	// copy file to assetDir (if it's a file)
@@ -138,9 +148,9 @@ func (db *PersistentKB) store(fileOrContent ...string) error {
 // RemoveEntry removes an entry from the persistent knowledge base.
 func (db *PersistentKB) RemoveEntry(entry string) error {
 	db.Lock()
-	for i, e := range db.Files {
+	for i, e := range db.files {
 		if e == entry {
-			db.Files = append(db.Files[:i], db.Files[i+1:]...)
+			db.files = append(db.files[:i], db.files[i+1:]...)
 			break
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -40,8 +41,10 @@ func startAPI(listenAddress string) {
 	e.POST("/api/collections", createCollection(collections, openAIClient, embeddingModel, fileAssets))
 	e.POST("/api/collections/:name/upload", uploadFile(collections, fileAssets))
 	e.GET("/api/collections", listCollections)
+	e.GET("/api/collections/:name/entries", listFiles(collections))
 	e.POST("/api/collections/:name/search", search(collections))
 	e.POST("/api/collections/:name/reset", reset(collections))
+	e.DELETE("/api/collections/:name/entry/delete", delete(collections))
 
 	e.Logger.Fatal(e.Start(listenAddress))
 }
@@ -60,6 +63,31 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 
 		collections[r.Name] = rag.NewPersistentChromeCollection(client, r.Name, collectionDBPath, assetDir, embeddingModel)
 		return c.JSON(http.StatusCreated, collections[r.Name])
+	}
+}
+
+func delete(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+		}
+
+		type request struct {
+			Entry string `json:"entry"`
+		}
+
+		r := new(request)
+		if err := c.Bind(r); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+		}
+
+		if err := collection.RemoveEntry(r.Entry); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to remove entry"})
+		}
+
+		return c.JSON(http.StatusOK, collection.ListEntries())
 	}
 }
 
@@ -112,6 +140,17 @@ func errorMessage(message string) map[string]string {
 	return map[string]string{"error": message}
 }
 
+func listFiles(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Collection not found"})
+		}
+		return c.JSON(http.StatusOK, collection.ListEntries())
+	}
+}
+
 // uploadFile handles uploading files to a collection
 func uploadFile(collections collectionList, fileAssets string) func(c echo.Context) error {
 	return func(c echo.Context) error {
@@ -132,13 +171,7 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		}
 		defer f.Close()
 
-		tempDir, err := os.MkdirTemp("", "upload")
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create temporary directory"))
-		}
-		defer os.RemoveAll(tempDir)
-
-		filePath := tempDir + "/" + file.Filename
+		filePath := filepath.Join(fileAssets, file.Filename)
 		out, err := os.Create(filePath)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create file"))
