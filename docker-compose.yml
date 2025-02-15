@@ -20,7 +20,7 @@ services:
       - EMBEDDING_MODEL=bert-embeddings
       - FILE_ASSETS=/assets
       - OPENAI_API_KEY=sk-1234567890
-      - OPENAI_BASE_URL=http://localai:8081
+      - OPENAI_BASE_URL=http://localai:8080
     volumes:
       - ./volumes/db:/db
       - ./volumes/assets/:/assets

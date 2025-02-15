@@ -110,6 +110,22 @@ var _ = Describe("API", func() {
 		expectContent("foo", "spiders", "Willowgrove", localRAG)
 		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
 	})
+
+	It("should reset collections", func() {
+		err := localRAG.CreateCollection(testCollection)
+		Expect(err).To(BeNil())
+
+		tempContent(story1, localRAG)
+		tempContent(story2, localRAG)
+
+		err = localRAG.Reset(testCollection)
+		Expect(err).To(BeNil())
+
+		docs, err := localRAG.Search(testCollection, "spiders", 1)
+		Expect(err).To(HaveOccurred())
+		Expect(docs).To(BeNil())
+		Expect(err.Error()).To(ContainSubstring("failed to search collection"))
+	})
 })
 
 func tempContent(content string, localRAG *client.Client) {
