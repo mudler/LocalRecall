@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mudler/localrag/xlog"
+	"github.com/mudler/localrag/pkg/xlog"
 	sitemap "github.com/oxffaa/gopher-parse-sitemap"
 	"jaytaylor.com/html2text"
 )

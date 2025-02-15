@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mudler/localrag/pkg/xlog"
 	"github.com/mudler/localrag/rag/engine"
-	"github.com/mudler/localrag/xlog"
 	"github.com/sashabaranov/go-openai"
 )
 
