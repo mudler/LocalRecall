@@ -62,7 +62,9 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 
 func (db *PersistentKB) Reset() error {
 	db.Lock()
-	// TODO: should we delete file first?
+	for _, f := range db.files {
+		os.Remove(filepath.Join(db.assetDir, f))
+	}
 	db.files = []string{}
 	db.save()
 	db.Unlock()
@@ -81,8 +83,8 @@ func (db *PersistentKB) save() error {
 	return os.WriteFile(db.path, data, 0644)
 }
 
-// ReInit reinitializes the persistent knowledge base with the files that were added to it.
-func (db *PersistentKB) ReInit() error {
+// repopulate reinitializes the persistent knowledge base with the files that were added to it.
+func (db *PersistentKB) repopulate() error {
 	db.Lock()
 	defer db.Unlock()
 
@@ -90,7 +92,12 @@ func (db *PersistentKB) ReInit() error {
 		return err
 	}
 
-	if err := db.store(db.files...); err != nil {
+	files := []string{}
+	for _, f := range db.files {
+		files = append(files, filepath.Join(db.assetDir, f))
+	}
+
+	if err := db.store(files...); err != nil {
 		return err
 	}
 
@@ -98,7 +105,7 @@ func (db *PersistentKB) ReInit() error {
 }
 
 // Store stores an entry in the persistent knowledge base.
-func (db *PersistentKB) ListEntries() []string {
+func (db *PersistentKB) ListDocuments() []string {
 	db.Lock()
 	defer db.Unlock()
 
@@ -151,7 +158,7 @@ func (db *PersistentKB) store(fileOrContent ...string) error {
 			return err
 		}
 		for _, p := range pieces {
-			if err := db.Engine.Store(p); err != nil {
+			if err := db.Engine.Store(p, map[string]string{"source": c, "type": "file"}); err != nil {
 				return err
 			}
 		}
@@ -166,12 +173,14 @@ func (db *PersistentKB) RemoveEntry(entry string) error {
 	for i, e := range db.files {
 		if e == entry {
 			db.files = append(db.files[:i], db.files[i+1:]...)
+			os.Remove(filepath.Join(db.assetDir, e))
 			break
 		}
 	}
 	db.Unlock()
 
-	return db.ReInit()
+	// TODO: this is suboptimal, but currently chromem does not support deleting single entities
+	return db.repopulate()
 }
 
 func copyFile(src, dst string) error {

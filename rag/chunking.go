@@ -56,7 +56,7 @@ func StringsToKB(db Engine, chunkSize int, content ...string) {
 		xlog.Info("chunks: ", len(chunks))
 		for _, chunk := range chunks {
 			xlog.Info("Chunk size: ", len(chunk))
-			db.Store(chunk)
+			db.Store(chunk, map[string]string{"source": "inline"})
 		}
 	}
 }

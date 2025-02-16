@@ -73,7 +73,7 @@ func delete(collections collectionList) func(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to remove entry"))
 		}
 
-		return c.JSON(http.StatusOK, collection.ListEntries())
+		return c.JSON(http.StatusOK, collection.ListDocuments())
 	}
 }
 
@@ -110,7 +110,11 @@ func search(collections collectionList) func(c echo.Context) error {
 		fmt.Println(r)
 
 		if r.MaxResults == 0 {
-			r.MaxResults = 5
+			if len(collection.ListDocuments()) >= 5 {
+				r.MaxResults = 5
+			} else {
+				r.MaxResults = 1
+			}
 		}
 
 		results, err := collection.Search(r.Query, r.MaxResults)
@@ -133,7 +137,8 @@ func listFiles(collections collectionList) func(c echo.Context) error {
 		if !exists {
 			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
 		}
-		return c.JSON(http.StatusOK, collection.ListEntries())
+
+		return c.JSON(http.StatusOK, collection.ListDocuments())
 	}
 }
 

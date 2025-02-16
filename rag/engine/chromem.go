@@ -83,7 +83,7 @@ func (c *ChromemDB) embedding() chromem.EmbeddingFunc {
 	)
 }
 
-func (c *ChromemDB) Store(s string) error {
+func (c *ChromemDB) Store(s string, metadata map[string]string) error {
 	defer func() {
 		c.index++
 	}()
@@ -92,8 +92,9 @@ func (c *ChromemDB) Store(s string) error {
 	}
 	return c.collection.AddDocuments(context.Background(), []chromem.Document{
 		{
-			Content: s,
-			ID:      fmt.Sprint(c.index),
+			Metadata: metadata,
+			Content:  s,
+			ID:       fmt.Sprint(c.index),
 		},
 	}, runtime.NumCPU())
 }

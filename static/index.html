@@ -180,7 +180,12 @@
           })
             .then(response => response.json())
             .then(data => {
-              this.searchResults = data;
+              console.log(data);
+              if (data.length === 0) {
+                this.searchResults = ['No results found'];
+                return;
+              }
+              this.searchResults = data.map(item => JSON.stringify(item));
             })
             .catch(error => console.error('Error searching collection:', error));
         },
