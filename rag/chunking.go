@@ -102,12 +102,11 @@ func splitParagraphIntoChunks(paragraph string, maxChunkSize int) []string {
 	return chunks
 }
 
-func chunkFileOrContent(f, assetDir string, maxchunksize int) ([]string, error) {
+func chunkFile(f, assetDir string, maxchunksize int) ([]string, error) {
 	fpath := filepath.Join(assetDir, f)
 
 	if _, err := os.Stat(fpath); os.IsNotExist(err) {
-		xlog.Error("File does not exist, treating as text content: ", f)
-		return splitParagraphIntoChunks(f, maxchunksize), nil
+		return nil, fmt.Errorf("file does not exist: %s", fpath)
 	}
 
 	// Get file extension:

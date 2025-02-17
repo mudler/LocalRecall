@@ -2,6 +2,7 @@ package rag
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 
 	"os"
@@ -137,12 +138,14 @@ func (db *PersistentKB) Store(entry string) error {
 
 	e := entry
 	// copy file to assetDir (if it's a file)
-	if _, err := os.Stat(entry); err == nil {
-		if err := copyFile(entry, db.assetDir); err != nil {
-			return err
-		}
-		e = filepath.Base(entry)
+	if _, err := os.Stat(entry); err != nil {
+		return fmt.Errorf("file does not exist: %s", entry)
 	}
+
+	if err := copyFile(entry, db.assetDir); err != nil {
+		return err
+	}
+	e = filepath.Base(entry)
 
 	if err := db.store(e); err != nil {
 		return err
@@ -151,9 +154,9 @@ func (db *PersistentKB) Store(entry string) error {
 	return db.save()
 }
 
-func (db *PersistentKB) store(fileOrContent ...string) error {
-	for _, c := range fileOrContent {
-		pieces, err := chunkFileOrContent(c, db.assetDir, db.maxChunkSize)
+func (db *PersistentKB) store(files ...string) error {
+	for _, c := range files {
+		pieces, err := chunkFile(c, db.assetDir, db.maxChunkSize)
 		if err != nil {
 			return err
 		}
