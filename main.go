@@ -15,6 +15,7 @@ var (
 	openAIKey        = os.Getenv("OPENAI_API_KEY")
 	openAIBaseURL    = os.Getenv("OPENAI_BASE_URL")
 	listeningAddress = os.Getenv("LISTENING_ADDRESS")
+	vectorEngine     = os.Getenv("VECTOR_ENGINE")
 )
 
 func init() {
@@ -27,6 +28,10 @@ func init() {
 
 	if listeningAddress == "" {
 		listeningAddress = ":8080"
+	}
+
+	if vectorEngine == "" {
+		vectorEngine = "chromem"
 	}
 
 }
