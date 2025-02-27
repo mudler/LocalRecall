@@ -1,3 +1,4 @@
+// TODO: this is a duplicate of LocalAI/core/store/client.go
 package localai
 
 import (
