@@ -24,6 +24,7 @@ func init() {
 	}
 	if fileAssets == "" {
 		fileAssets = "assets"
+		os.MkdirAll(fileAssets, 0755)
 	}
 
 	if listeningAddress == "" {
@@ -33,7 +34,6 @@ func init() {
 	if vectorEngine == "" {
 		vectorEngine = "chromem"
 	}
-
 }
 
 func startAPI(listenAddress string) {
