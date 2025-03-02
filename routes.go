@@ -166,16 +166,19 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
+			xlog.Error("Collection not found")
 			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
 		}
 
 		file, err := c.FormFile("file")
 		if err != nil {
+			xlog.Error("Failed to read file", err)
 			return c.JSON(http.StatusBadRequest, errorMessage("Failed to read file: "+err.Error()))
 		}
 
 		f, err := file.Open()
 		if err != nil {
+			xlog.Error("Failed to open file", err)
 			return c.JSON(http.StatusBadRequest, errorMessage("Failed to open file: "+err.Error()))
 		}
 		defer f.Close()
@@ -183,12 +186,14 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		filePath := filepath.Join(fileAssets, file.Filename)
 		out, err := os.Create(filePath)
 		if err != nil {
+			xlog.Error("Failed to create file", err)
 			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create file"))
 		}
 		defer out.Close()
 
 		_, err = io.Copy(out, f)
 		if err != nil {
+			xlog.Error("Failed to copy file", err)
 			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to copy file"))
 		}
 
@@ -200,6 +205,7 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		// Save the file to disk
 		err = collection.Store(filePath)
 		if err != nil {
+			xlog.Error("Failed to store file", err)
 			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to store file: "+err.Error()))
 		}
 
