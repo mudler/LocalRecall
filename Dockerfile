@@ -15,6 +15,7 @@ FROM scratch AS base
 #RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates
 
 COPY --from=builder /app/localrag /localrag
+COPY --from=builder /etc/ssl /etc/ssl
 COPY --from=builder /tmp /tmp
 
 # Expose necessary ports
