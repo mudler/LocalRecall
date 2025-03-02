@@ -23,6 +23,9 @@ clean:
 docker-build:
 	@docker build -t $(IMAGE) .
 
+docker-push:
+	@docker push $(IMAGE)
+
 docker-compose-up:
 	@docker compose up -d
 

@@ -32,6 +32,9 @@ func loadDB(path string) ([]string, error) {
 func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize int) (*PersistentKB, error) {
 	// if file exists, try to load an existing state
 	// if file does not exist, create a new state
+	if err := os.MkdirAll(assetDir, 0755); err != nil {
+		return nil, err
+	}
 
 	if _, err := os.Stat(stateFile); err != nil {
 		persistentKB := &PersistentKB{

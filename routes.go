@@ -187,14 +187,14 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		out, err := os.Create(filePath)
 		if err != nil {
 			xlog.Error("Failed to create file", err)
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create file"))
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create file "+err.Error()))
 		}
 		defer out.Close()
 
 		_, err = io.Copy(out, f)
 		if err != nil {
 			xlog.Error("Failed to copy file", err)
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to copy file"))
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to copy file: "+err.Error()))
 		}
 
 		if collection.EntryExists(file.Filename) {
