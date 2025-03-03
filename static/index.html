@@ -1,94 +1,298 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Collection Manager</title>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- Fixed Tailwind CDN link -->
+  <link href="https://cdn.jsdelivr.net/npm/@tailwindcss/ui@latest/dist/tailwind-ui.min.css" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            gray: {
+              650: '#2D3748',
+            }
+          }
+        }
+      }
+    }
+  </script>
 </head>
-<body class="bg-gray-100 font-sans leading-normal tracking-normal">
-  <div class="container mx-auto p-4" x-data="collectionManager()">
-    <h1 class="text-3xl font-bold mb-4">Collection Manager</h1>
-
-    <!-- Create Collection Section -->
-    <div class="mb-6 p-4 bg-white rounded-lg shadow">
-      <h2 class="text-xl font-semibold mb-2">Create Collection</h2>
-      <input type="text" placeholder="Collection Name" x-model="newCollectionName" class="border p-2 rounded w-full mb-2">
-      <button @click="createCollection" class="bg-blue-500 hover:bg-blue-700 text-white py-2 px-4 rounded">Create</button>
-    </div>
-
-    <!-- Upload File Section -->
-    <div class="mb-6 p-4 bg-white rounded-lg shadow">
-      <h2 class="text-xl font-semibold mb-2">Upload File to Collection</h2>
-      <div class="flex items-center space-x-2">
-        <select x-model="selectedCollection" class="border p-2 rounded">
-          <option value="" disabled>Select a Collection</option>
-          <template x-for="collection in collections" :key="collection">
-            <option :value="collection" x-text="collection"></option>
-          </template>
-        </select>
-        <input type="file" id="fileUpload" class="border p-2 rounded">
-        <button @click="uploadFile" class="bg-green-500 hover:bg-green-700 text-white py-2 px-4 rounded">Upload</button>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 min-h-full transition-colors duration-200 font-sans leading-normal tracking-normal">
+  <div class="min-h-full" x-data="collectionManager()">
+    <!-- Navigation bar -->
+    <nav class="bg-white dark:bg-gray-800 shadow-md">
+      <div class="container mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <i class="fas fa-layer-group text-indigo-600 dark:text-indigo-400 text-2xl"></i>
+          <h1 class="text-2xl font-bold">Collection Manager</h1>
+        </div>
+        <div class="flex items-center space-x-3">
+          <span class="text-sm text-gray-500 dark:text-gray-400">Hello, mudler</span>
+          <button @click="toggleDarkMode" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+            <i class="fas" :class="darkMode ? 'fa-sun text-yellow-400' : 'fa-moon text-indigo-600'"></i>
+          </button>
+        </div>
+      </div>
+    </nav>
+    
+    <div class="container mx-auto p-4 md:p-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Left Column -->
+        <div class="space-y-6">
+          <!-- Create Collection Card -->
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
+            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <div class="flex items-center">
+                <i class="fas fa-folder-plus text-indigo-600 dark:text-indigo-400 mr-2"></i>
+                <h2 class="text-xl font-semibold">Create Collection</h2>
+              </div>
+            </div>
+            <div class="p-5">
+              <div class="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3">
+                <input 
+                  type="text" 
+                  placeholder="Collection Name" 
+                  x-model="newCollectionName" 
+                  class="flex-grow border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                >
+                <button 
+                  @click="createCollection" 
+                  class="flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                  :disabled="loading.create"
+                >
+                  <i class="fas fa-spinner fa-spin mr-2" x-show="loading.create"></i>
+                  <span x-text="loading.create ? 'Creating...' : 'Create'"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Upload File Card -->
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
+            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <div class="flex items-center">
+                <i class="fas fa-cloud-upload-alt text-green-600 dark:text-green-400 mr-2"></i>
+                <h2 class="text-xl font-semibold">Upload File</h2>
+              </div>
+            </div>
+            <div class="p-5 space-y-4">
+              <div class="flex flex-col space-y-3">
+                <select 
+                  x-model="selectedCollection" 
+                  class="border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                >
+                  <option value="" disabled>Select a Collection</option>
+                  <template x-for="collection in collections" :key="collection">
+                    <option :value="collection" x-text="collection"></option>
+                  </template>
+                </select>
+                
+                <div class="border-2 border-dashed dark:border-gray-600 rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                     @click="document.getElementById('fileUpload').click()">
+                  <i class="fas fa-file-upload text-gray-400 text-2xl mb-2"></i>
+                  <p class="text-sm text-gray-500 dark:text-gray-400" x-text="fileName || 'Click to select file or drag and drop'"></p>
+                  <input 
+                    type="file" 
+                    id="fileUpload" 
+                    class="hidden" 
+                    @change="fileName = $event.target.files[0] ? $event.target.files[0].name : ''"
+                  >
+                </div>
+                
+                <button 
+                  @click="uploadFile" 
+                  class="flex items-center justify-center bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+                  :disabled="loading.upload"
+                >
+                  <i class="fas fa-spinner fa-spin mr-2" x-show="loading.upload"></i>
+                  <span x-text="loading.upload ? 'Uploading...' : 'Upload'"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Collections List Card -->
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
+            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center">
+                  <i class="fas fa-folder text-amber-600 dark:text-amber-400 mr-2"></i>
+                  <h2 class="text-xl font-semibold">Collections</h2>
+                </div>
+                <button 
+                  @click="fetchCollections" 
+                  class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300"
+                  :class="{'animate-spin': loading.collections}"
+                >
+                  <i class="fas fa-sync-alt"></i>
+                </button>
+              </div>
+            </div>
+            <div class="p-5">
+              <div class="max-h-60 overflow-y-auto">
+                <ul class="space-y-2">
+                  <template x-if="!collections.length">
+                    <li class="text-center py-8 text-gray-500 dark:text-gray-400">
+                      <i class="fas fa-folder-open text-2xl mb-2"></i>
+                      <p>No collections found</p>
+                    </li>
+                  </template>
+                  <template x-for="collection in collections" :key="collection">
+                    <li class="flex items-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-650 transition-colors">
+                      <i class="fas fa-folder-open text-amber-600 dark:text-amber-400 mr-2"></i>
+                      <span class="flex-grow" x-text="collection"></span>
+                      <span class="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full"></span>
+                    </li>
+                  </template>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Right Column -->
+        <div class="space-y-6">
+          <!-- List Entries Card -->
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
+            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <div class="flex items-center">
+                <i class="fas fa-list text-blue-600 dark:text-blue-400 mr-2"></i>
+                <h2 class="text-xl font-semibold">Collection Entries</h2>
+              </div>
+            </div>
+            <div class="p-5 space-y-4">
+              <select 
+                x-model="selectedListCollection" 
+                @change="listEntries" 
+                class="w-full border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+              >
+                <option value="" disabled>Select a Collection</option>
+                <template x-for="collection in collections" :key="collection">
+                  <option :value="collection" x-text="collection"></option>
+                </template>
+              </select>
+              
+              <div class="mt-4">
+                <div class="flex items-center justify-between pb-2 border-b dark:border-gray-700">
+                  <h3 class="font-bold">Entries</h3>
+                  <div x-show="loading.entries" class="text-blue-600 dark:text-blue-400">
+                    <i class="fas fa-spinner fa-spin"></i>
+                  </div>
+                </div>
+                <div class="max-h-80 overflow-y-auto mt-2">
+                  <ul class="space-y-2">
+                    <template x-if="!entries.length && !loading.entries">
+                      <li class="text-center py-8 text-gray-500 dark:text-gray-400">
+                        <i class="fas fa-file-alt text-2xl mb-2"></i>
+                        <p>No entries found</p>
+                      </li>
+                    </template>
+                    <template x-for="entry in entries" :key="entry">
+                      <li class="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-650 group transition-all">
+                        <div class="flex items-center justify-between">
+                          <div class="flex items-center space-x-2 max-w-[80%]">
+                            <i class="fas fa-file-alt text-blue-600 dark:text-blue-400"></i>
+                            <span class="truncate" x-text="entry"></span>
+                          </div>
+                          <button 
+                            @click="deleteEntry(entry)" 
+                            class="text-red-500 hover:text-red-700 p-1 opacity-0 group-hover:opacity-100 transition-all focus:outline-none"
+                            :disabled="loading.delete === entry"
+                          >
+                            <i class="fas" :class="loading.delete === entry ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
+                          </button>
+                        </div>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Search Card -->
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
+            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <div class="flex items-center">
+                <i class="fas fa-search text-purple-600 dark:text-purple-400 mr-2"></i>
+                <h2 class="text-xl font-semibold">Search Collection</h2>
+              </div>
+            </div>
+            <div class="p-5 space-y-4">
+              <div class="space-y-3">
+                <select 
+                  x-model="selectedSearchCollection" 
+                  class="w-full border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                >
+                  <option value="" disabled>Select a Collection</option>
+                  <template x-for="collection in collections" :key="collection">
+                    <option :value="collection" x-text="collection"></option>
+                  </template>
+                </select>
+                
+                <div class="relative">
+                  <input 
+                    type="text" 
+                    placeholder="Enter search query..." 
+                    x-model="searchQuery" 
+                    class="w-full border dark:border-gray-600 dark:bg-gray-700 pl-10 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    @keyup.enter="searchCollection"
+                  >
+                  <i class="fas fa-search text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2"></i>
+                </div>
+                
+                <button 
+                  @click="searchCollection" 
+                  class="w-full flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50"
+                  :disabled="loading.search"
+                >
+                  <i class="fas fa-spinner fa-spin mr-2" x-show="loading.search"></i>
+                  <span x-text="loading.search ? 'Searching...' : 'Search'"></span>
+                </button>
+              </div>
+              
+              <div class="mt-4">
+                <div class="flex items-center justify-between pb-2 border-b dark:border-gray-700">
+                  <h3 class="font-bold">Results</h3>
+                  <span x-show="searchResults.length" class="text-xs bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 px-2 py-1 rounded-full" x-text="searchResults.length + ' found'"></span>
+                </div>
+                <div class="max-h-60 overflow-y-auto mt-2">
+                  <ul class="space-y-2">
+                    <template x-if="!searchResults.length && !loading.search">
+                      <li class="text-center py-8 text-gray-500 dark:text-gray-400">
+                        <i class="fas fa-search text-2xl mb-2"></i>
+                        <p>No results to display</p>
+                      </li>
+                    </template>
+                    <template x-for="(result, index) in searchResults" :key="index">
+                      <li class="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">Result #<span x-text="index + 1"></span></div>
+                        <pre class="text-sm whitespace-pre-wrap break-words" x-text="result"></pre>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-
-    <!-- List Collections Section -->
-    <div class="mb-6 p-4 bg-white rounded-lg shadow">
-      <h2 class="text-xl font-semibold mb-2">Collections</h2>
-      <ul>
-        <template x-for="collection in collections" :key="collection">
-          <li class="mb-1 p-2 bg-gray-200 rounded" x-text="collection"></li>
-        </template>
-      </ul>
-    </div>
-
-    <!-- List Entries in Collection Section -->
-    <div class="mb-6 p-4 bg-white rounded-lg shadow">
-      <h2 class="text-xl font-semibold mb-2">List Entries in Collection</h2>
-      <div class="flex items-center space-x-2">
-        <select x-model="selectedListCollection" @change="listEntries" class="border p-2 rounded">
-          <option value="" disabled>Select a Collection</option>
-          <template x-for="collection in collections" :key="collection">
-            <option :value="collection" x-text="collection"></option>
-          </template>
-        </select>
+    
+    <!-- Footer -->
+    <footer class="bg-white dark:bg-gray-800 shadow-inner mt-8 py-4">
+      <div class="container mx-auto px-4 text-center text-gray-500 dark:text-gray-400 text-sm">
+        Collection Manager - Last updated <span>2025-03-03 16:59:27</span>
       </div>
-      <div class="mt-4">
-        <h3 class="font-bold">Entries:</h3>
-        <ul>
-          <template x-for="entry in entries" :key="entry">
-            <li class="mb-1 p-2 bg-gray-200 rounded flex justify-between items-center">
-              <span x-text="entry"></span>
-              <button @click="deleteEntry(entry)" class="bg-red-500 hover:bg-red-700 text-white py-1 px-2 rounded">Delete</button>
-            </li>
-          </template>
-        </ul>
-      </div>
-    </div>
-
-    <!-- Search Section -->
-    <div class="mb-6 p-4 bg-white rounded-lg shadow">
-      <h2 class="text-xl font-semibold mb-2">Search Collection</h2>
-      <div class="flex items-center space-x-2">
-        <select x-model="selectedSearchCollection" class="border p-2 rounded">
-          <option value="" disabled>Select a Collection</option>
-          <template x-for="collection in collections" :key="collection">
-            <option :value="collection" x-text="collection"></option>
-          </template>
-        </select>
-        <input type="text" placeholder="Search Query" x-model="searchQuery" class="border p-2 rounded w-full">
-        <button @click="searchCollection" class="bg-purple-500 hover:bg-purple-700 text-white py-2 px-4 rounded">Search</button>
-      </div>
-      <div class="mt-4">
-        <h3 class="font-bold">Search Results:</h3>
-        <ul>
-          <template x-for="result in searchResults" :key="result">
-            <li class="mb-1 p-2 bg-gray-200 rounded" x-text="result"></li>
-          </template>
-        </ul>
-      </div>
-    </div>
+    </footer>
   </div>
 
   <script>
@@ -102,95 +306,203 @@
         collections: [],
         entries: [],
         searchResults: [],
+        fileName: '',
+        darkMode: false,
+        loading: {
+          collections: false,
+          create: false,
+          upload: false,
+          entries: false,
+          delete: false,
+          search: false
+        },
+        
+        toggleDarkMode() {
+          this.darkMode = !this.darkMode;
+          if (this.darkMode) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        },
 
         fetchCollections() {
+          this.loading.collections = true;
           fetch('/api/collections')
-            .then(response => response.json())
+            .then(response => {
+              if (!response.ok) throw new Error('Failed to fetch collections');
+              return response.json();
+            })
             .then(data => {
               this.collections = data;
             })
-            .catch(error => console.error('Error fetching collections:', error));
+            .catch(error => {
+              console.error('Error fetching collections:', error);
+              this.showToast('error', 'Failed to fetch collections');
+            })
+            .finally(() => {
+              this.loading.collections = false;
+            });
         },
 
         createCollection() {
-          if (!this.newCollectionName) return alert('Please enter a collection name');
-
+          if (!this.newCollectionName) return this.showToast('warning', 'Please enter a collection name');
+          
+          this.loading.create = true;
           fetch('/api/collections', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: this.newCollectionName })
           })
-            .then(response => response.json())
+            .then(response => {
+              if (!response.ok) throw new Error('Failed to create collection');
+              return response.json();
+            })
             .then(() => {
+              this.showToast('success', `Collection "${this.newCollectionName}" created successfully`);
               this.newCollectionName = '';
               this.fetchCollections();
             })
-            .catch(error => console.error('Error creating collection:', error));
+            .catch(error => {
+              console.error('Error creating collection:', error);
+              this.showToast('error', 'Failed to create collection');
+            })
+            .finally(() => {
+              this.loading.create = false;
+            });
         },
 
         uploadFile() {
-          if (!this.selectedCollection) return alert('Please select a collection');
+          if (!this.selectedCollection) return this.showToast('warning', 'Please select a collection');
           const fileInput = document.getElementById('fileUpload');
-          if (!fileInput.files.length) return alert('Please select a file');
+          if (!fileInput.files.length) return this.showToast('warning', 'Please select a file');
 
           const formData = new FormData();
           formData.append('file', fileInput.files[0]);
-
+          
+          this.loading.upload = true;
           fetch(`/api/collections/${this.selectedCollection}/upload`, {
             method: 'POST',
             body: formData
           })
-            .then(() => alert('File uploaded successfully'))
-            .catch(error => console.error('Error uploading file:', error));
+            .then(response => {
+              if (!response.ok) throw new Error('Upload failed');
+              this.showToast('success', 'File uploaded successfully');
+              fileInput.value = '';
+              this.fileName = '';
+            })
+            .catch(error => {
+              console.error('Error uploading file:', error);
+              this.showToast('error', 'Failed to upload file');
+            })
+            .finally(() => {
+              this.loading.upload = false;
+            });
         },
 
         listEntries() {
           if (!this.selectedListCollection) return;
-
+          
+          this.loading.entries = true;
+          this.entries = [];
           fetch(`/api/collections/${this.selectedListCollection}/entries`)
-            .then(response => response.json())
+            .then(response => {
+              if (!response.ok) throw new Error('Failed to list entries');
+              return response.json();
+            })
             .then(data => {
               this.entries = data;
             })
-            .catch(error => console.error('Error listing entries:', error));
+            .catch(error => {
+              console.error('Error listing entries:', error);
+              this.showToast('error', 'Failed to fetch entries');
+            })
+            .finally(() => {
+              this.loading.entries = false;
+            });
         },
 
         deleteEntry(entry) {
-          if (!this.selectedListCollection) return alert('Please select a collection');
-
+          if (!this.selectedListCollection) return this.showToast('warning', 'Please select a collection');
+          
+          this.loading.delete = entry;
           fetch(`/api/collections/${this.selectedListCollection}/entry/delete`, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ entry: entry })
           })
-            .then(() => {
-              alert('Entry deleted successfully');
+            .then(response => {
+              if (!response.ok) throw new Error('Deletion failed');
+              this.showToast('success', 'Entry deleted successfully');
               this.listEntries(); // Refresh the entries list
             })
-            .catch(error => console.error('Error deleting entry:', error));
+            .catch(error => {
+              console.error('Error deleting entry:', error);
+              this.showToast('error', 'Failed to delete entry');
+            })
+            .finally(() => {
+              this.loading.delete = false;
+            });
         },
 
         searchCollection() {
-          if (!this.selectedSearchCollection || !this.searchQuery) return alert('Please select a collection and enter a query');
-
+          if (!this.selectedSearchCollection || !this.searchQuery) 
+            return this.showToast('warning', 'Please select a collection and enter a query');
+          
+          this.loading.search = true;
+          this.searchResults = [];
           fetch(`/api/collections/${this.selectedSearchCollection}/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: this.searchQuery, max_results: 5 })
           })
-            .then(response => response.json())
+            .then(response => {
+              if (!response.ok) throw new Error('Search failed');
+              return response.json();
+            })
             .then(data => {
               console.log(data);
               if (data.length === 0) {
                 this.searchResults = ['No results found'];
                 return;
               }
-              this.searchResults = data.map(item => JSON.stringify(item));
+              this.searchResults = data.map(item => JSON.stringify(item, null, 2));
             })
-            .catch(error => console.error('Error searching collection:', error));
+            .catch(error => {
+              console.error('Error searching collection:', error);
+              this.showToast('error', 'Search failed');
+            })
+            .finally(() => {
+              this.loading.search = false;
+            });
+        },
+
+        showToast(type, message) {
+          const iconMap = {
+            success: 'success',
+            error: 'error',
+            warning: 'warning',
+            info: 'info'
+          };
+          
+          Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: iconMap[type] || 'info',
+            title: message,
+            showConfirmButton: false,
+            timer: 3000,
+            timerProgressBar: true
+          });
         },
 
         init() {
+          // Check for dark mode preference
+          this.darkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (this.darkMode) {
+            document.documentElement.classList.add('dark');
+          }
+          
           this.fetchCollections();
         }
       };
