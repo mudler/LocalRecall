@@ -7,7 +7,6 @@
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <!-- Fixed Tailwind CDN link -->
-  <link href="https://cdn.jsdelivr.net/npm/@tailwindcss/ui@latest/dist/tailwind-ui.min.css" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script>
@@ -227,6 +226,28 @@
               </div>
             </div>
             <div class="p-5 space-y-4">
+              <!-- Error Banner -->
+              <div 
+                x-show="searchError" 
+                x-transition:enter="transition ease-out duration-300"
+                x-transition:enter-start="opacity-0 transform scale-95"
+                x-transition:enter-end="opacity-100 transform scale-100"
+                class="bg-red-100 border border-red-400 text-red-700 dark:bg-red-900 dark:border-red-700 dark:text-red-200 px-4 py-3 rounded relative mb-4"
+              >
+                <div class="flex items-start">
+                  <div class="flex-shrink-0 mt-0.5">
+                    <i class="fas fa-exclamation-circle"></i>
+                  </div>
+                  <div class="ml-3 flex-1">
+                    <p class="font-medium">Search Error</p>
+                    <p class="text-sm" x-text="searchError"></p>
+                  </div>
+                  <button @click="searchError = ''" class="ml-auto -mx-1.5 -my-1.5 bg-red-100 dark:bg-red-900 text-red-500 dark:text-red-200 rounded-lg p-1.5 hover:bg-red-200 dark:hover:bg-red-800 inline-flex h-8 w-8 transition">
+                    <i class="fas fa-times m-auto"></i>
+                  </button>
+                </div>
+              </div>
+
               <div class="space-y-3">
                 <select 
                   x-model="selectedSearchCollection" 
@@ -248,15 +269,29 @@
                   >
                   <i class="fas fa-search text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2"></i>
                 </div>
+
+                <div class="flex gap-2">
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="20" 
+                    placeholder="Max results" 
+                    x-model="maxResults" 
+                    class="w-1/3 border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  >
+                  <button 
+                    @click="searchCollection" 
+                    class="w-2/3 flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50"
+                    :disabled="loading.search"
+                  >
+                    <i class="fas fa-spinner fa-spin mr-2" x-show="loading.search"></i>
+                    <span x-text="loading.search ? 'Searching...' : 'Search'"></span>
+                  </button>
+                </div>
                 
-                <button 
-                  @click="searchCollection" 
-                  class="w-full flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50"
-                  :disabled="loading.search"
-                >
-                  <i class="fas fa-spinner fa-spin mr-2" x-show="loading.search"></i>
-                  <span x-text="loading.search ? 'Searching...' : 'Search'"></span>
-                </button>
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  <i class="fas fa-info-circle mr-1"></i> Search timestamp: <span x-text="searchTimestamp || 'Not searched yet'"></span>
+                </div>
               </div>
               
               <div class="mt-4">
@@ -266,7 +301,7 @@
                 </div>
                 <div class="max-h-60 overflow-y-auto mt-2">
                   <ul class="space-y-2">
-                    <template x-if="!searchResults.length && !loading.search">
+                    <template x-if="!searchResults.length && !loading.search && !searchError">
                       <li class="text-center py-8 text-gray-500 dark:text-gray-400">
                         <i class="fas fa-search text-2xl mb-2"></i>
                         <p>No results to display</p>
@@ -290,7 +325,9 @@
     <!-- Footer -->
     <footer class="bg-white dark:bg-gray-800 shadow-inner mt-8 py-4">
       <div class="container mx-auto px-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-        Collection Manager - Last updated <span>2025-03-03 16:59:27</span>
+        <span>LocalRAG</span>
+        <br>
+        <span></span>
       </div>
     </footer>
   </div>
@@ -303,9 +340,12 @@
         selectedListCollection: '',
         selectedSearchCollection: '',
         searchQuery: '',
+        maxResults: 5,
         collections: [],
         entries: [],
         searchResults: [],
+        searchError: '',
+        searchTimestamp: '',
         fileName: '',
         darkMode: false,
         loading: {
@@ -446,31 +486,58 @@
         },
 
         searchCollection() {
-          if (!this.selectedSearchCollection || !this.searchQuery) 
-            return this.showToast('warning', 'Please select a collection and enter a query');
-          
-          this.loading.search = true;
+          // Clear previous errors and results
+          this.searchError = '';
           this.searchResults = [];
+          
+          if (!this.selectedSearchCollection || !this.searchQuery) {
+            this.searchError = 'Please select a collection and enter a query';
+            return;
+          }
+          
+          const maxResultsVal = parseInt(this.maxResults) || 5;
+          this.loading.search = true;
+          
+          // Set search timestamp
+          const now = new Date();
+          this.searchTimestamp = now.toISOString().replace('T', ' ').substring(0, 19);
+          
           fetch(`/api/collections/${this.selectedSearchCollection}/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: this.searchQuery, max_results: 5 })
+            body: JSON.stringify({ 
+              query: this.searchQuery, 
+              max_results: maxResultsVal 
+            })
           })
             .then(response => {
-              if (!response.ok) throw new Error('Search failed');
+              if (!response.ok) {
+                return response.text().then(text => {
+                  // Try to parse as JSON to get error message
+                  try {
+                    const data = JSON.parse(text);
+                    throw new Error(data.error || data.message || 'Search failed with status: ' + response.status);
+                  } catch (e) {
+                    // If parsing fails, use the raw text or status
+                    throw new Error(text || 'Search failed with status: ' + response.status);
+                  }
+                });
+              }
               return response.json();
             })
             .then(data => {
-              console.log(data);
               if (data.length === 0) {
-                this.searchResults = ['No results found'];
+                this.searchResults = ['No results found for query: "' + this.searchQuery + '"'];
                 return;
               }
               this.searchResults = data.map(item => JSON.stringify(item, null, 2));
             })
             .catch(error => {
               console.error('Error searching collection:', error);
-              this.showToast('error', 'Search failed');
+              // Show detailed error in the UI
+              this.searchError = error.message || 'An unknown error occurred during search';
+              // Also show in toast
+              this.showToast('error', 'Search failed: ' + this.searchError);
             })
             .finally(() => {
               this.loading.search = false;
