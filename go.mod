@@ -3,6 +3,7 @@ module github.com/mudler/localrag
 go 1.22.9
 
 require (
+	github.com/dslipak/pdf v0.0.2
 	github.com/labstack/echo/v4 v4.13.3
 	github.com/onsi/ginkgo/v2 v2.22.2
 	github.com/onsi/gomega v1.36.2

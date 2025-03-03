@@ -1,6 +1,7 @@
 package rag
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dslipak/pdf"
 	"github.com/mudler/localrag/pkg/xlog"
 	sitemap "github.com/oxffaa/gopher-parse-sitemap"
 	"jaytaylor.com/html2text"
@@ -115,6 +117,18 @@ func chunkFile(f, assetDir string, maxchunksize int) ([]string, error) {
 	// ...
 	extension := filepath.Ext(fpath)
 	switch extension {
+	case ".pdf":
+		r, err := pdf.Open(fpath)
+		if err != nil {
+			return nil, err
+		}
+		var buf bytes.Buffer
+		b, err := r.GetPlainText()
+		if err != nil {
+			return nil, err
+		}
+		buf.ReadFrom(b)
+		return splitParagraphIntoChunks(buf.String(), maxchunksize), nil
 	case ".txt", ".md":
 		xlog.Debug("Reading text file: ", f)
 		f, err := os.Open(fpath)
