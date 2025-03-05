@@ -104,9 +104,7 @@ func splitParagraphIntoChunks(paragraph string, maxChunkSize int) []string {
 	return chunks
 }
 
-func chunkFile(f, assetDir string, maxchunksize int) ([]string, error) {
-	fpath := filepath.Join(assetDir, f)
-
+func chunkFile(fpath string, maxchunksize int) ([]string, error) {
 	if _, err := os.Stat(fpath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does not exist: %s", fpath)
 	}
@@ -130,16 +128,16 @@ func chunkFile(f, assetDir string, maxchunksize int) ([]string, error) {
 		buf.ReadFrom(b)
 		return splitParagraphIntoChunks(buf.String(), maxchunksize), nil
 	case ".txt", ".md":
-		xlog.Debug("Reading text file: ", f)
+		xlog.Debug("Reading text file: ", fpath)
 		f, err := os.Open(fpath)
 		if err != nil {
-			xlog.Error("Error opening file: ", f)
+			xlog.Error("Error opening file: ", fpath)
 			return nil, err
 		}
 		defer f.Close()
 		content, err := io.ReadAll(f)
 		if err != nil {
-			xlog.Error("Error reading file: ", f)
+			xlog.Error("Error reading file: ", fpath)
 			return nil, err
 		}
 		return splitParagraphIntoChunks(string(content), maxchunksize), nil
