@@ -88,7 +88,7 @@ func delete(collections collectionList) func(c echo.Context) error {
 		}
 
 		if err := collection.RemoveEntry(r.Entry); err != nil {
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to remove entry"))
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to remove entry: "+err.Error()))
 		}
 
 		return c.JSON(http.StatusOK, collection.ListDocuments())
