@@ -15,6 +15,11 @@ See also:
 - Works locally with LocalAI
 - No dependency on external cloud services
 - Provides a RAG knowledgebase layer to use on top of other Vector Databases, or just use the embedded Vector Database
+- Supported file types:
+  - Markdown
+  - Text
+  - PDF
+  - more to come..
 
 ## Prerequisites
 - Go 1.16 or above
