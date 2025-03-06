@@ -75,6 +75,7 @@ func (db *PersistentKB) Reset() error {
 	if err := db.Engine.Reset(); err != nil {
 		return err
 	}
+	os.RemoveAll(db.path)
 	return nil
 }
 
