@@ -93,7 +93,7 @@ func (db *PersistentKB) repopulate() error {
 	defer db.Unlock()
 
 	if err := db.Engine.Reset(); err != nil {
-		return err
+		return fmt.Errorf("failed to reset engine: %w", err)
 	}
 
 	files := []string{}
@@ -102,7 +102,7 @@ func (db *PersistentKB) repopulate() error {
 	}
 
 	if err := db.store(files...); err != nil {
-		return err
+		return fmt.Errorf("failed to store files: %w", err)
 	}
 
 	return nil
@@ -146,12 +146,12 @@ func (db *PersistentKB) Store(entry string) error {
 	}
 
 	if err := copyFile(entry, db.assetDir); err != nil {
-		return err
+		return fmt.Errorf("failed to copy file: %w", err)
 	}
-	e = filepath.Base(entry)
+	e = filepath.Join(db.assetDir, filepath.Base(entry))
 
 	if err := db.store(e); err != nil {
-		return err
+		return fmt.Errorf("failed to store file: %w", err)
 	}
 
 	return db.save()
@@ -159,7 +159,7 @@ func (db *PersistentKB) Store(entry string) error {
 
 func (db *PersistentKB) store(files ...string) error {
 	for _, c := range files {
-		pieces, err := chunkFile(c, db.assetDir, db.maxChunkSize)
+		pieces, err := chunkFile(c, db.maxChunkSize)
 		if err != nil {
 			return err
 		}
