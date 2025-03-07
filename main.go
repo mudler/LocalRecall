@@ -50,7 +50,7 @@ func startAPI(listenAddress string) {
 
 	registerStaticHandler(e)
 
-	chunkingSize := 100
+	chunkingSize := 400
 	if maxChunkingSize != "" {
 		var err error
 		chunkingSize, err = strconv.Atoi(maxChunkingSize)
