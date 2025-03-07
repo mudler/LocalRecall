@@ -20,13 +20,13 @@ var collections = collectionList{}
 func newVectorEngine(
 	vectorEngineType string,
 	llmClient *openai.Client,
-	apiURL, apiKey, collectionName, dbPath, embeddingModel string) *rag.PersistentKB {
+	apiURL, apiKey, collectionName, dbPath, embeddingModel string, maxChunkSize int) *rag.PersistentKB {
 	switch vectorEngineType {
 	case "chromem":
 
-		return rag.NewPersistentChromeCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel)
+		return rag.NewPersistentChromeCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize)
 	case "localai":
-		return rag.NewPersistentLocalAICollection(llmClient, apiURL, apiKey, collectionName, dbPath, fileAssets, embeddingModel)
+		return rag.NewPersistentLocalAICollection(llmClient, apiURL, apiKey, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize)
 	default:
 		xlog.Error("Unknown vector engine")
 		os.Exit(1)
@@ -36,15 +36,15 @@ func newVectorEngine(
 }
 
 // API routes for managing collections
-func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client) {
+func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSize int) {
 
 	// Load all collections
 	colls := rag.ListAllCollections(collectionDBPath)
 	for _, c := range colls {
-		collections[c] = newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel)
+		collections[c] = newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel, maxChunkingSize)
 	}
 
-	e.POST("/api/collections", createCollection(collections, openAIClient, embeddingModel))
+	e.POST("/api/collections", createCollection(collections, openAIClient, embeddingModel, maxChunkingSize))
 	e.POST("/api/collections/:name/upload", uploadFile(collections, fileAssets))
 	e.GET("/api/collections", listCollections)
 	e.GET("/api/collections/:name/entries", listFiles(collections))
@@ -54,7 +54,7 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client) {
 }
 
 // createCollection handles creating a new collection
-func createCollection(collections collectionList, client *openai.Client, embeddingModel string) func(c echo.Context) error {
+func createCollection(collections collectionList, client *openai.Client, embeddingModel string, maxChunkingSize int) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		type request struct {
 			Name string `json:"name"`
@@ -65,7 +65,7 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
 		}
 
-		collections[r.Name] = newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel)
+		collections[r.Name] = newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel, maxChunkingSize)
 		return c.JSON(http.StatusCreated, collections[r.Name])
 	}
 }

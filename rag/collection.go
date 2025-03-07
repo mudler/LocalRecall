@@ -15,7 +15,7 @@ import (
 const collectionPrefix = "collection-"
 
 // NewPersistentChromeCollection creates a new persistent knowledge base collection using the ChromemDB engine
-func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string) *PersistentKB {
+func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize int) *PersistentKB {
 	chromemDB, err := engine.NewChromemDBCollection(collectionName, dbPath, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create ChromemDB", err)
@@ -26,7 +26,7 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
 		chromemDB,
-		1000)
+		maxChunkSize)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
 		os.Exit(1)
@@ -36,7 +36,7 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 }
 
 // NewPersistentLocalAICollection creates a new persistent knowledge base collection using the LocalAI stores engine
-func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, collectionName, dbPath, filePath, embeddingModel string) *PersistentKB {
+func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize int) *PersistentKB {
 	laiStore := localai.NewStoreClient(apiURL, apiKey)
 	ragDB := engine.NewLocalAIRAGDB(laiStore, llmClient, embeddingModel)
 
@@ -44,7 +44,7 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
 		ragDB,
-		1000)
+		maxChunkSize)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
 		os.Exit(1)

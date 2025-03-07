@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -16,6 +17,7 @@ var (
 	openAIBaseURL    = os.Getenv("OPENAI_BASE_URL")
 	listeningAddress = os.Getenv("LISTENING_ADDRESS")
 	vectorEngine     = os.Getenv("VECTOR_ENGINE")
+	maxChunkingSize  = os.Getenv("MAX_CHUNKING_SIZE")
 )
 
 func init() {
@@ -47,7 +49,17 @@ func startAPI(listenAddress string) {
 	openAIClient := openai.NewClientWithConfig(config)
 
 	registerStaticHandler(e)
-	registerAPIRoutes(e, openAIClient)
+
+	chunkingSize := 100
+	if maxChunkingSize != "" {
+		var err error
+		chunkingSize, err = strconv.Atoi(maxChunkingSize)
+		if err != nil {
+			e.Logger.Fatal("Failed to convert MAX_CHUNKING_SIZE to integer")
+		}
+	}
+
+	registerAPIRoutes(e, openAIClient, chunkingSize)
 
 	e.Logger.Fatal(e.Start(listenAddress))
 }
