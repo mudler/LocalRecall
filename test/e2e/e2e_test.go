@@ -106,7 +106,7 @@ var _ = Describe("API", func() {
 
 		tempContent(story1, localRAG)
 		tempContent(story2, localRAG)
-		expectContent("foo", "spiders", "Willowgrove", localRAG)
+		expectContent("foo", "spiders", "spider", localRAG)
 		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
 	})
 
@@ -137,7 +137,7 @@ var _ = Describe("API", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(entries).To(HaveLen(2))
 
-		expectContent("foo", "spiders", "Willowgrove", localRAG)
+		expectContent("foo", "spiders", "spider", localRAG)
 		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
 
 		entry := fileName
