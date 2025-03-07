@@ -40,7 +40,12 @@ function collectionManager() {
             return response.json();
           })
           .then(data => {
-            this.collections = data;
+            if (Array.isArray(data)) {
+              this.collections = data;
+            } else {
+              this.collections = [];
+              console.error('collections data:', data);
+            }
           })
           .catch(error => {
             console.error('Error fetching collections:', error);
