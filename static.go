@@ -28,4 +28,5 @@ func getFileSystem(useOS bool) http.FileSystem {
 func registerStaticHandler(e *echo.Echo) {
 	assetHandler := http.FileServer(getFileSystem(false))
 	e.GET("/", echo.WrapHandler(assetHandler))
+	e.GET("/static/*", echo.WrapHandler(http.StripPrefix("/static/", assetHandler)))
 }

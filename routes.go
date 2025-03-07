@@ -50,7 +50,7 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client) {
 	e.GET("/api/collections/:name/entries", listFiles(collections))
 	e.POST("/api/collections/:name/search", search(collections))
 	e.POST("/api/collections/:name/reset", reset(collections))
-	e.DELETE("/api/collections/:name/entry/delete", deleteCollection(collections))
+	e.DELETE("/api/collections/:name/entry/delete", deleteEntryFromCollection(collections))
 }
 
 // createCollection handles creating a new collection
@@ -70,7 +70,7 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 	}
 }
 
-func deleteCollection(collections collectionList) func(c echo.Context) error {
+func deleteEntryFromCollection(collections collectionList) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
