@@ -12,6 +12,9 @@ services:
     - granite-embedding-107m-multilingual
   ragserver:
     image: quay.io/mudler/localrag
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - 8080:8080
     environment:
