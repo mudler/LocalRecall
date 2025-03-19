@@ -1,11 +1,13 @@
 package main
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/mudler/localrag/pkg/xlog"
@@ -36,12 +38,31 @@ func newVectorEngine(
 }
 
 // API routes for managing collections
-func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSize int) {
+func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSize int, apiKeys []string) {
 
 	// Load all collections
 	colls := rag.ListAllCollections(collectionDBPath)
 	for _, c := range colls {
 		collections[c] = newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel, maxChunkingSize)
+	}
+
+	if len(apiKeys) > 0 {
+		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error {
+				apiKey := c.Request().Header.Get("Authorization")
+				apiKey = strings.TrimPrefix(apiKey, "Bearer ")
+				if len(apiKeys) == 0 {
+					return next(c)
+				}
+				for _, validKey := range apiKeys {
+					if subtle.ConstantTimeCompare([]byte(apiKey), []byte(validKey)) == 1 {
+						return next(c)
+					}
+				}
+
+				return c.JSON(http.StatusUnauthorized, errorMessage("Unauthorized"))
+			}
+		})
 	}
 
 	e.POST("/api/collections", createCollection(collections, openAIClient, embeddingModel, maxChunkingSize))

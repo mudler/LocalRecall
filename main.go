@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -18,6 +19,7 @@ var (
 	listeningAddress = os.Getenv("LISTENING_ADDRESS")
 	vectorEngine     = os.Getenv("VECTOR_ENGINE")
 	maxChunkingSize  = os.Getenv("MAX_CHUNKING_SIZE")
+	apiKeys          = os.Getenv("API_KEYS")
 )
 
 func init() {
@@ -50,6 +52,11 @@ func startAPI(listenAddress string) {
 
 	registerStaticHandler(e)
 
+	keys := []string{}
+	if apiKeys != "" {
+		keys = strings.Split(apiKeys, ",")
+	}
+
 	chunkingSize := 400
 	if maxChunkingSize != "" {
 		var err error
@@ -59,7 +66,7 @@ func startAPI(listenAddress string) {
 		}
 	}
 
-	registerAPIRoutes(e, openAIClient, chunkingSize)
+	registerAPIRoutes(e, openAIClient, chunkingSize, keys)
 
 	e.Logger.Fatal(e.Start(listenAddress))
 }
