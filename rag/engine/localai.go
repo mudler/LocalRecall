@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mudler/localrag/rag/engine/localai"
-	"github.com/mudler/localrag/rag/types"
+	"github.com/mudler/localrecall/rag/engine/localai"
+	"github.com/mudler/localrecall/rag/types"
 	"github.com/sashabaranov/go-openai"
 )
 

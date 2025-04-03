@@ -14,7 +14,7 @@ FROM scratch AS base
 # Install ca-certificates to ensure TLS verification works
 #RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates
 
-COPY --from=builder /app/localrag /localrag
+COPY --from=builder /app/localrecall /localrecall
 COPY --from=builder /etc/ssl /etc/ssl
 COPY --from=builder /tmp /tmp
 
@@ -22,4 +22,4 @@ COPY --from=builder /tmp /tmp
 EXPOSE 8080
 
 # Set default command to start the Go application
-ENTRYPOINT [ "/localrag" ]
+ENTRYPOINT [ "/localrecall" ]

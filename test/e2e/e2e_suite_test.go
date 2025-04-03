@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	localAIEndpoint  = os.Getenv("LOCALAI_ENDPOINT")
-	localRAGEndpoint = os.Getenv("LOCALRAG_ENDPOINT")
+	localAIEndpoint     = os.Getenv("LOCALAI_ENDPOINT")
+	localRecallEndpoint = os.Getenv("LOCALRECALL_ENDPOINT")
 )
 
 func TestE2E(t *testing.T) {
@@ -18,8 +18,8 @@ func TestE2E(t *testing.T) {
 		localAIEndpoint = "http://localhost:8081"
 	}
 
-	if localRAGEndpoint == "" {
-		localRAGEndpoint = "http://localhost:8080"
+	if localRecallEndpoint == "" {
+		localRecallEndpoint = "http://localhost:8080"
 	}
 
 	RegisterFailHandler(Fail)

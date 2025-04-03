@@ -1,7 +1,7 @@
 package rag
 
 import (
-	"github.com/mudler/localrag/rag/types"
+	"github.com/mudler/localrecall/rag/types"
 )
 
 type Engine interface {

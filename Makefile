@@ -2,23 +2,23 @@ VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || git --no-pager 
 
 export CGO_ENABLED?=0
 
-IMAGE?=quay.io/mudler/localrag:latest
+IMAGE?=quay.io/mudler/localrecall:latest
 
 print-version:
 	@echo "Version: ${VERSION}"
 
 build:
-	@go build -v -ldflags "-X github.com/mudler/localrag/internal/versioning.ApplicationVersion=${VERSION}" -o ./localrag ./
+	@go build -v -ldflags "-X github.com/mudler/localrecall/internal/versioning.ApplicationVersion=${VERSION}" -o ./localrecall ./
 
 run: build
-	@./localrag
+	@./localrecall
 
 .PHONY: test
 test:
 	@go test -coverprofile=coverage.txt -covermode=atomic -v ./...
 
 clean:
-	@rm -rf localrag
+	@rm -rf localrecall
 
 docker-build:
 	@docker build -t $(IMAGE) .

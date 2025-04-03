@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
-	"github.com/mudler/localrag/pkg/xlog"
-	"github.com/mudler/localrag/rag"
+	"github.com/mudler/localrecall/pkg/xlog"
+	"github.com/mudler/localrecall/rag"
 	"github.com/sashabaranov/go-openai"
 )
 
