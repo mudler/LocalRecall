@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mudler/localrag/pkg/client"
+	"github.com/mudler/localrecall/pkg/client"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/sashabaranov/go-openai"
@@ -55,8 +55,8 @@ As Edgar headed home, tired but triumphant, he couldn’t help but smile. He had
 
 var _ = Describe("API", func() {
 	var (
-		localAI  *openai.Client
-		localRAG *client.Client
+		localAI     *openai.Client
+		localRecall *client.Client
 	)
 
 	BeforeEach(func() {
@@ -68,7 +68,7 @@ var _ = Describe("API", func() {
 		config.BaseURL = localAIEndpoint
 
 		localAI = openai.NewClientWithConfig(config)
-		localRAG = client.NewClient(localRAGEndpoint)
+		localRecall = client.NewClient(localRecallEndpoint)
 
 		Eventually(func() error {
 
@@ -83,73 +83,73 @@ var _ = Describe("API", func() {
 		}, 5*time.Minute, time.Second).Should(Succeed())
 
 		Eventually(func() error {
-			_, err := localRAG.ListCollections()
+			_, err := localRecall.ListCollections()
 
 			return err
 		}, 5*time.Minute, time.Second).Should(Succeed())
 
-		localRAG.Reset(testCollection)
+		localRecall.Reset(testCollection)
 	})
 
 	It("should create collections", func() {
-		err := localRAG.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(testCollection)
 		Expect(err).To(BeNil())
 
-		collections, err := localRAG.ListCollections()
+		collections, err := localRecall.ListCollections()
 		Expect(err).To(BeNil())
 		Expect(collections).To(ContainElement(testCollection))
 	})
 
 	It("should search between documents", func() {
-		err := localRAG.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(testCollection)
 		Expect(err).ToNot(HaveOccurred())
 
-		tempContent(story1, localRAG)
-		tempContent(story2, localRAG)
-		expectContent("foo", "spiders", "spider", localRAG)
-		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
+		tempContent(story1, localRecall)
+		tempContent(story2, localRecall)
+		expectContent("foo", "spiders", "spider", localRecall)
+		expectContent("foo", "heist", "The Great Pigeon Heist", localRecall)
 	})
 
 	It("should reset collections", func() {
-		err := localRAG.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(testCollection)
 		Expect(err).To(BeNil())
 
-		tempContent(story1, localRAG)
-		tempContent(story2, localRAG)
+		tempContent(story1, localRecall)
+		tempContent(story2, localRecall)
 
-		err = localRAG.Reset(testCollection)
+		err = localRecall.Reset(testCollection)
 		Expect(err).To(BeNil())
 
-		docs, err := localRAG.Search(testCollection, "spiders", 1)
+		docs, err := localRecall.Search(testCollection, "spiders", 1)
 		Expect(err).To(HaveOccurred())
 		Expect(docs).To(BeNil())
 		Expect(err.Error()).To(ContainSubstring("failed to search collection"))
 	})
 
 	It("should be able to delete documents", func() {
-		err := localRAG.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(testCollection)
 		Expect(err).ToNot(HaveOccurred())
 
-		tempContent(story1, localRAG)
-		fileName := tempContent(story2, localRAG)
+		tempContent(story1, localRecall)
+		fileName := tempContent(story2, localRecall)
 
-		entries, err := localRAG.ListEntries(testCollection)
+		entries, err := localRecall.ListEntries(testCollection)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(entries).To(HaveLen(2))
 
-		expectContent("foo", "spiders", "spider", localRAG)
-		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
+		expectContent("foo", "spiders", "spider", localRecall)
+		expectContent("foo", "heist", "The Great Pigeon Heist", localRecall)
 
 		entry := fileName
-		entries, err = localRAG.DeleteEntry(testCollection, entry)
+		entries, err = localRecall.DeleteEntry(testCollection, entry)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(entries).To(HaveLen(1))
 
-		expectContent("foo", "heist", "The Great Pigeon Heist", localRAG)
+		expectContent("foo", "heist", "The Great Pigeon Heist", localRecall)
 	})
 })
 
-func tempContent(content string, localRAG *client.Client) string {
+func tempContent(content string, localRecall *client.Client) string {
 	// Create a temporary file
 	f, err := os.MkdirTemp("", "temp-content")
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
@@ -167,14 +167,14 @@ func tempContent(content string, localRAG *client.Client) string {
 	_, err = ff.WriteString(content)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
-	err = localRAG.Store(testCollection, ff.Name())
+	err = localRecall.Store(testCollection, ff.Name())
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
 	return fileName
 }
 
-func expectContent(collection, searchTerm, expected string, localRAG *client.Client) {
-	docs, err := localRAG.Search(collection, searchTerm, 1)
+func expectContent(collection, searchTerm, expected string, localRecall *client.Client) {
+	docs, err := localRecall.Search(collection, searchTerm, 1)
 	ExpectWithOffset(1, err).To(BeNil())
 	ExpectWithOffset(1, len(docs)).To(BeNumerically("==", 1))
 	ExpectWithOffset(1, docs[0].Content).To(ContainSubstring(expected))

@@ -1,6 +1,6 @@
-# LocalRAG
+# LocalRecall
 
-A simple, no-frills LocalRAG webui that works well with LocalAI.
+A simple, no-frills LocalRecall webui that works well with LocalAI.
 
 No GPU, No internet, no cloud needed.
 
@@ -29,25 +29,25 @@ See also:
 
 ### Clone the Repository
 ```sh
-git clone https://github.com/mudler/LocalRAG.git
-cd LocalRAG
+git clone https://github.com/mudler/LocalRecall.git
+cd LocalRecall
 ```
 
 ### Build from Source
 ```sh
-go build -o localrag
+go build -o localrecall
 ```
 
 ### Run the Application
 ```sh
-./localrag
+./localrecall
 ```
 
 ## Docker Deployment
 Build and run the Docker container:
 ```sh
-docker build -t localrag .
-docker run -p 8080:8080 localrag
+docker build -t localrecall .
+docker run -p 8080:8080 localrecall
 ```
 
 ## REST API Documentation

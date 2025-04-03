@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/mudler/localrag/rag/types"
+	"github.com/mudler/localrecall/rag/types"
 )
 
 // Client is a client for the RAG API

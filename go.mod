@@ -1,4 +1,4 @@
-module github.com/mudler/localrag
+module github.com/mudler/localrecall
 
 go 1.22.9
 

@@ -11,7 +11,7 @@ services:
     command:
     - granite-embedding-107m-multilingual
   ragserver:
-    image: quay.io/mudler/localrag
+    image: quay.io/mudler/localrecall
     build:
       context: .
       dockerfile: Dockerfile

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/dslipak/pdf"
-	"github.com/mudler/localrag/pkg/xlog"
+	"github.com/mudler/localrecall/pkg/xlog"
 	sitemap "github.com/oxffaa/gopher-parse-sitemap"
 	"jaytaylor.com/html2text"
 )
