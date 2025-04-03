@@ -73,7 +73,7 @@ var _ = Describe("API", func() {
 		Eventually(func() error {
 
 			res, err := localAI.CreateEmbeddings(context.Background(), openai.EmbeddingRequest{
-				Model: "bert-embeddings",
+				Model: "granite-embedding-107m-multilingual",
 				Input: "foo",
 			})
 			if len(res.Data) == 0 {
@@ -107,7 +107,7 @@ var _ = Describe("API", func() {
 		tempContent(story1, localRecall)
 		tempContent(story2, localRecall)
 		expectContent("foo", "spiders", "spider", localRecall)
-		expectContent("foo", "heist", "The Great Pigeon Heist", localRecall)
+		expectContent("foo", "heist", "the Great Pigeon Heist", localRecall)
 	})
 
 	It("should reset collections", func() {
@@ -138,14 +138,14 @@ var _ = Describe("API", func() {
 		Expect(entries).To(HaveLen(2))
 
 		expectContent("foo", "spiders", "spider", localRecall)
-		expectContent("foo", "heist", "The Great Pigeon Heist", localRecall)
+		expectContent("foo", "heist", "the Great Pigeon Heist", localRecall)
 
 		entry := fileName
 		entries, err = localRecall.DeleteEntry(testCollection, entry)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(entries).To(HaveLen(1))
 
-		expectContent("foo", "heist", "The Great Pigeon Heist", localRecall)
+		expectContent("foo", "heist", "the Great Pigeon Heist", localRecall)
 	})
 })
 
