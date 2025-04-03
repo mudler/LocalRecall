@@ -76,7 +76,28 @@ Build and run using Docker:
 
 ```sh
 docker build -t localrecall .
-docker run -p 8080:8080 localrecall
+docker run -ti -v $PWD/state:/state \
+               -e COLLECTION_DB_PATH=/state/db \
+               -e EMBEDDING_MODEL=granite-embedding-107m-multilingual \
+               -e FILE_ASSETS=/state/assets \
+               -e OPENAI_API_KEY=sk-1234567890 \
+               -e OPENAI_BASE_URL=http://localai:8080 \
+               -p 8080:8080 localrecall
+
+# Or use the images already built by the CI:
+docker run -ti -v $PWD/state:/state \
+               -e COLLECTION_DB_PATH=/state/db \
+               -e EMBEDDING_MODEL=granite-embedding-107m-multilingual \
+               -e FILE_ASSETS=/state/assets \
+               -e OPENAI_API_KEY=sk-1234567890 \
+               -e OPENAI_BASE_URL=http://localai:8080 \
+               -p 8080:8080 quay.io/mudler/localrecall
+```
+
+or with Docker compose
+
+```sh
+docker compose up -d
 ```
 
 ---
