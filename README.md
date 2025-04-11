@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/7f8322fe-f6e9-4e54-98b3-afae287b8082" alt="LocalRecall Logo" width="220"/>
+  <img src="./static/logo.png" alt="LocalRecall Logo" width="220"/>
 </p>
 
 <h3 align="center"><em>Your AI. Your Hardware. Your Rules.</em></h3>
