@@ -17,10 +17,34 @@ A lightweight, no-frills RESTful API designed for managing knowledge bases and f
 
 Currently, LocalRecall is batteries included and supports a local vector store powered by **Chromem**, with plans to add additional vector stores such as **Milvus** and **Qdrant**. It can easily integrate with LocalAI, LocalAGI, and other agent frameworks, offering an intuitive web UI for convenient file management, including support for raw text inputs.
 
-🔗 **LocalRecall is part of the Local AI stack family:**
+## 📚🆕 Local Stack Family
 
-- [LocalAI](https://github.com/mudler/LocalAI)
-- [LocalAGI](https://github.com/mudler/LocalAGI)
+🆕 LocalAI is now part of a comprehensive suite of AI tools designed to work together:
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="https://github.com/mudler/LocalAI">
+        <img src="https://raw.githubusercontent.com/mudler/LocalAI/refs/heads/rebranding/core/http/static/logo_horizontal.png" width="300" alt="LocalAI Logo">
+      </a>
+    </td>
+    <td width="50%" valign="top">
+      <h3><a href="https://github.com/mudler/LocalRecall">LocalAI</a></h3>
+      <p>LocalAI is the free, Open Source OpenAI alternative. LocalAI act as a drop-in replacement REST API that's compatible with OpenAI (Elevenlabs, Anthropic... ) API specifications for local AI inferencing. It allows you to run LLMs, generate images, audio (and not only) locally or on-prem with consumer grade hardware, supporting multiple model families. Does not require GPU.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="https://github.com/mudler/LocalAGI">
+        <img src="https://raw.githubusercontent.com/mudler/LocalAGI/refs/heads/main/webui/react-ui/public/logo_2.png" width="300" alt="LocalAGI Logo">
+      </a>
+    </td>
+    <td width="50%" valign="top">
+      <h3><a href="https://github.com/mudler/LocalAGI">LocalAGI</a></h3>
+      <p>A powerful Local AI agent management platform that serves as a drop-in replacement for OpenAI's Responses API, enhanced with advanced agentic capabilities.</p>
+    </td>
+  </tr>
+</table>
 
 ---
 
