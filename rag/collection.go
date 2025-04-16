@@ -9,6 +9,7 @@ import (
 	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/engine"
 	"github.com/mudler/localrecall/rag/engine/localai"
+	"github.com/mudler/localrecall/rag/types"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -22,10 +23,17 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 		os.Exit(1)
 	}
 
+	// Create a hybrid search engine with the ChromemDB engine
+	hybridEngine, err := engine.NewHybridSearchEngine(chromemDB, types.NewBasicReranker(), dbPath)
+	if err != nil {
+		xlog.Error("Failed to create hybrid search engine", err)
+		os.Exit(1)
+	}
+
 	persistentKB, err := NewPersistentCollectionKB(
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
-		chromemDB,
+		hybridEngine,
 		maxChunkSize)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
@@ -40,10 +48,17 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 	laiStore := localai.NewStoreClient(apiURL, apiKey)
 	ragDB := engine.NewLocalAIRAGDB(laiStore, llmClient, embeddingModel)
 
+	// Create a hybrid search engine with the LocalAI engine
+	hybridEngine, err := engine.NewHybridSearchEngine(ragDB, types.NewBasicReranker(), dbPath)
+	if err != nil {
+		xlog.Error("Failed to create hybrid search engine", err)
+		os.Exit(1)
+	}
+
 	persistentKB, err := NewPersistentCollectionKB(
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
-		ragDB,
+		hybridEngine,
 		maxChunkSize)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
@@ -59,18 +74,15 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 
 // ListAllCollections lists all collections in the database
 func ListAllCollections(dbPath string) []string {
+	collections := []string{}
 	files, err := os.ReadDir(dbPath)
 	if err != nil {
-		xlog.Error("Failed to read directory", err)
-		return nil
+		return collections
 	}
 
-	var collections []string
-	for _, file := range files {
-		if !file.IsDir() && filepath.Ext(file.Name()) == ".json" && strings.HasPrefix(file.Name(), collectionPrefix) {
-			collectionName := strings.TrimPrefix(file.Name(), collectionPrefix)
-			collectionName = strings.TrimSuffix(collectionName, ".json")
-			collections = append(collections, collectionName)
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), collectionPrefix) {
+			collections = append(collections, strings.TrimPrefix(strings.TrimSuffix(f.Name(), ".json"), collectionPrefix))
 		}
 	}
 

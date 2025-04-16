@@ -1,12 +1,12 @@
 package rag
 
 import (
+	"github.com/mudler/localrecall/rag/interfaces"
 	"github.com/mudler/localrecall/rag/types"
 )
 
-type Engine interface {
-	Store(s string, meta map[string]string) error
-	Reset() error
-	Search(s string, similarEntries int) ([]types.Result, error)
-	Count() int
-}
+// Engine is an alias for interfaces.Engine
+type Engine = interfaces.Engine
+
+// Result is an alias for types.Result
+type Result = types.Result
