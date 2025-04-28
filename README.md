@@ -130,19 +130,21 @@ docker compose up -d
 
 LocalRecall uses environment variables to configure its behavior. These variables allow you to customize paths, models, and integration settings without modifying the code.
 
-| Variable             | Description |
-|----------------------|-------------|
-| `COLLECTION_DB_PATH` | Path to the vector database directory where collections are stored. |
-| `EMBEDDING_MODEL`    | Name of the embedding model used for vectorization (e.g., `granite-embedding-107m-multilingual`). |
-| `FILE_ASSETS`        | Directory path to store and retrieve uploaded file assets. |
-| `OPENAI_API_KEY`     | API key for embedding services (such as LocalAI or OpenAI-compatible APIs). |
-| `OPENAI_BASE_URL`    | Base URL for the embedding model API (commonly `http://localai:8080`). |
+| Variable             | Description                                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `COLLECTION_DB_PATH` | Path to the vector database directory where collections are stored.                                             |
+| `EMBEDDING_MODEL`    | Name of the embedding model used for vectorization (e.g., `granite-embedding-107m-multilingual`).               |
+| `FILE_ASSETS`        | Directory path to store and retrieve uploaded file assets.                                                      |
+| `OPENAI_API_KEY`     | API key for embedding services (such as LocalAI or OpenAI-compatible APIs).                                     |
+| `OPENAI_BASE_URL`    | Base URL for the embedding model API (commonly `http://localai:8080`).                                          |
 | `LISTENING_ADDRESS`  | Address the server listens on (default: `:8080`). Useful for deployments on custom ports or network interfaces. |
-| `VECTOR_ENGINE`      | Vector database engine to use (`chromem` by default; support for others like Milvus and Qdrant planned). |
-| `MAX_CHUNKING_SIZE`  | Maximum size (in characters) for breaking down documents into chunks. Affects performance and accuracy. |
-| `API_KEYS`           | Comma-separated list of API keys for securing access to the REST API (optional). |
+| `VECTOR_ENGINE`      | Vector database engine to use (`chromem` by default; support for others like Milvus and Qdrant planned).        |
+| `MAX_CHUNKING_SIZE`  | Maximum size (in characters) for breaking down documents into chunks. Affects performance and accuracy.         |
+| `API_KEYS`           | Comma-separated list of API keys for securing access to the REST API (optional).                                |
 
 These variables can be passed directly when running the binary or inside your Docker container for easy configuration.
+
+You can use an `.env` file to set the variables. The Docker compose file is configured to use an `.env` file in the root of the project if available.
 
 ---
 
@@ -215,4 +217,3 @@ We welcome contributions! Please feel free to:
 
 - ✅ Open an issue for suggestions or bugs.
 - ✅ Submit a pull request with enhancements.
-

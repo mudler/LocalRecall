@@ -9,7 +9,7 @@ services:
       - ./volumes/models:/models:cached
       - ./volumes/images/:/tmp/generated/images/
     command:
-    - granite-embedding-107m-multilingual
+      - granite-embedding-107m-multilingual
   ragserver:
     image: quay.io/mudler/localrecall
     build:
@@ -17,6 +17,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - 8080:8080
+    env_file: ".env"
     environment:
       - COLLECTION_DB_PATH=/db
       - EMBEDDING_MODEL=granite-embedding-107m-multilingual

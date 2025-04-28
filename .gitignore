@@ -1,3 +1,7 @@
 volumes/
 localrecall
 collections/
+state/
+assets/
+
+.env
