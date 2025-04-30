@@ -29,7 +29,7 @@ Currently, LocalRecall is batteries included and supports a local vector store p
       </a>
     </td>
     <td width="50%" valign="top">
-      <h3><a href="https://github.com/mudler/LocalRecall">LocalAI</a></h3>
+      <h3><a href="https://github.com/mudler/LocalAI">LocalAI</a></h3>
       <p>LocalAI is the free, Open Source OpenAI alternative. LocalAI act as a drop-in replacement REST API that's compatible with OpenAI API specifications for local AI inferencing. Does not require GPU.</p>
     </td>
   </tr>
