@@ -64,7 +64,7 @@ func (db *LocalAIRAGDB) Search(s string, similarEntries int) ([]types.Result, er
 	resp, err := db.openaiClient.CreateEmbeddings(context.TODO(),
 		openai.EmbeddingRequestStrings{
 			Input: []string{s},
-			Model: openai.AdaEmbeddingV2,
+			Model: openai.EmbeddingModel(db.embeddingModel),
 		},
 	)
 	if err != nil {
