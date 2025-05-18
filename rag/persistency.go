@@ -7,7 +7,16 @@ import (
 
 	"os"
 	"sync"
+
+	"github.com/mudler/localrecall/rag/engine"
 )
+
+// CollectionState represents the persistent state of a collection
+type CollectionState struct {
+	Files           []string                   `json:"files"`
+	ExternalSources []ExternalSource           `json:"external_sources"`
+	Index           map[string][]engine.Result `json:"index"`
+}
 
 type PersistentKB struct {
 	Engine
@@ -16,17 +25,31 @@ type PersistentKB struct {
 	path         string
 	assetDir     string
 	maxChunkSize int
+	sources      []ExternalSource
+
+	index map[string][]engine.Result
 }
 
-func loadDB(path string) ([]string, error) {
+func loadDB(path string) (*CollectionState, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	poolData := []string{}
-	err = json.Unmarshal(data, &poolData)
-	return poolData, err
+	state := &CollectionState{}
+	err = json.Unmarshal(data, state)
+	if err != nil {
+		// Handle legacy format (just an array of strings)
+		var legacyFiles []string
+		if err := json.Unmarshal(data, &legacyFiles); err != nil {
+			return nil, err
+		}
+		state.Files = legacyFiles
+		state.ExternalSources = []ExternalSource{}
+		state.Index = map[string][]engine.Result{}
+	}
+
+	return state, nil
 }
 
 func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize int) (*PersistentKB, error) {
@@ -43,22 +66,26 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 			Engine:       store,
 			assetDir:     assetDir,
 			maxChunkSize: maxChunkSize,
+			sources:      []ExternalSource{},
+			index:        map[string][]engine.Result{},
 		}
 		persistentKB.Lock()
 		defer persistentKB.Unlock()
 		return persistentKB, persistentKB.save()
 	}
 
-	poolData, err := loadDB(stateFile)
+	state, err := loadDB(stateFile)
 	if err != nil {
 		return nil, err
 	}
 	db := &PersistentKB{
 		Engine:       store,
-		files:        poolData,
+		files:        state.Files,
 		path:         stateFile,
 		maxChunkSize: maxChunkSize,
 		assetDir:     assetDir,
+		sources:      state.ExternalSources,
+		index:        state.Index,
 	}
 
 	return db, nil
@@ -70,6 +97,8 @@ func (db *PersistentKB) Reset() error {
 		os.Remove(filepath.Join(db.assetDir, f))
 	}
 	db.files = []string{}
+	db.sources = []ExternalSource{}
+	db.index = map[string][]engine.Result{}
 	db.save()
 	db.Unlock()
 	if err := db.Engine.Reset(); err != nil {
@@ -80,7 +109,12 @@ func (db *PersistentKB) Reset() error {
 }
 
 func (db *PersistentKB) save() error {
-	data, err := json.Marshal(db.files)
+	state := &CollectionState{
+		Files:           db.files,
+		ExternalSources: db.sources,
+		Index:           db.index,
+	}
+	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
@@ -102,7 +136,7 @@ func (db *PersistentKB) repopulate() error {
 		files = append(files, filepath.Join(db.assetDir, f))
 	}
 
-	if err := db.store(files...); err != nil {
+	if _, err := db.store(map[string]string{}, files...); err != nil {
 		return fmt.Errorf("failed to store files: %w", err)
 	}
 
@@ -133,14 +167,13 @@ func (db *PersistentKB) EntryExists(entry string) bool {
 }
 
 // Store stores an entry in the persistent knowledge base.
-func (db *PersistentKB) Store(entry string) error {
+func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 	db.Lock()
 	defer db.Unlock()
 
 	fileName := filepath.Base(entry)
 	db.files = append(db.files, fileName)
 
-	e := entry
 	// copy file to assetDir (if it's a file)
 	if _, err := os.Stat(entry); err != nil {
 		return fmt.Errorf("file does not exist: %s", entry)
@@ -149,33 +182,81 @@ func (db *PersistentKB) Store(entry string) error {
 	if err := copyFile(entry, db.assetDir); err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
-	e = filepath.Join(db.assetDir, filepath.Base(entry))
 
-	if err := db.store(e); err != nil {
+	_, err := db.store(metadata, fileName)
+	if err != nil {
 		return fmt.Errorf("failed to store file: %w", err)
 	}
 
 	return db.save()
 }
 
-func (db *PersistentKB) store(files ...string) error {
-	for _, c := range files {
-		pieces, err := chunkFile(c, db.maxChunkSize)
-		if err != nil {
-			return err
-		}
-		for _, p := range pieces {
-			if err := db.Engine.Store(p, map[string]string{"source": c, "type": "file"}); err != nil {
-				return err
-			}
+func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string) error {
+	db.Lock()
+	_, ok := db.index[entry]
+	db.Unlock()
+	// Check if we have it already in the index
+	if ok {
+		if err := db.RemoveEntry(entry); err != nil {
+			return fmt.Errorf("failed to remove entry: %w", err)
 		}
 	}
 
-	return nil
+	return db.Store(entry, metadata)
+}
+
+func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]engine.Result, error) {
+	results := []engine.Result{}
+	for _, c := range files {
+		e := filepath.Join(db.assetDir, filepath.Base(c))
+		pieces, err := chunkFile(e, db.maxChunkSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range pieces {
+			metadata["type"] = "file"
+			metadata["source"] = c
+			res, err := db.Engine.Store(p, metadata)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, res)
+		}
+		db.index[c] = results
+	}
+
+	return results, nil
 }
 
 // RemoveEntry removes an entry from the persistent knowledge base.
 func (db *PersistentKB) RemoveEntry(entry string) error {
+
+	if os.Getenv("LOCALRECALL_REPOPULATE_DELETE") != "true" {
+		e := filepath.Join(db.assetDir, entry)
+		// results := db.index[filepath.Join(db.assetDir, entry)]
+
+		// for _, r := range results {
+		// 	db.Engine.Delete(r.ID)
+		// }
+
+		if err := db.Engine.Delete(map[string]string{"source": entry}, map[string]string{}); err != nil {
+			return err
+		}
+
+		db.Lock()
+		delete(db.index, entry)
+
+		for i, f := range db.files {
+			if f == entry {
+				db.files = append(db.files[:i], db.files[i+1:]...)
+				break
+			}
+		}
+		os.Remove(e)
+		db.Unlock()
+		return db.save()
+	}
+
 	db.Lock()
 	for i, e := range db.files {
 		if e == entry {
@@ -196,4 +277,42 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dst, filepath.Base(src)), in, 0644)
+}
+
+// GetExternalSources returns the list of external sources for this collection
+func (db *PersistentKB) GetExternalSources() []ExternalSource {
+	db.Lock()
+	defer db.Unlock()
+	return db.sources
+}
+
+// AddExternalSource adds an external source to the collection
+func (db *PersistentKB) AddExternalSource(source ExternalSource) error {
+	db.Lock()
+	defer db.Unlock()
+
+	// Check if source already exists
+	for _, s := range db.sources {
+		if s.URL == source.URL {
+			return fmt.Errorf("source %s already exists", source.URL)
+		}
+	}
+
+	db.sources = append(db.sources, source)
+	return db.save()
+}
+
+// RemoveExternalSource removes an external source from the collection
+func (db *PersistentKB) RemoveExternalSource(url string) error {
+	db.Lock()
+	defer db.Unlock()
+
+	for i, s := range db.sources {
+		if s.URL == url {
+			db.sources = append(db.sources[:i], db.sources[i+1:]...)
+			return db.save()
+		}
+	}
+
+	return fmt.Errorf("source %s not found", url)
 }

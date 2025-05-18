@@ -203,6 +203,26 @@ curl -X DELETE $BASE_URL/collections/myCollection/entry/delete \
   -d '{"entry":"file.txt"}'
 ```
 
+- **Add External Source**:
+
+```sh
+curl -X POST $BASE_URL/collections/myCollection/sources \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com", "update_interval":30}'
+```
+
+The `update_interval` is specified in minutes. If not provided, it defaults to 60 minutes.
+
+- **Remove External Source**:
+
+```sh
+curl -X DELETE $BASE_URL/collections/myCollection/sources \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'
+```
+
+External sources are automatically monitored and updated in the background. The content is periodically fetched and added to the collection, making it searchable through the regular search endpoint.
+
 ---
 
 ## 📝 License
