@@ -295,18 +295,14 @@ function collectionManager() {
         this.sources = [];
         
         // Get sources from the collection's entries
-        fetch(`/api/collections/${this.selectedSourceCollection}/entries`)
+        fetch(`/api/collections/${this.selectedSourceCollection}/sources`)
           .then(response => {
             if (!response.ok) throw new Error('Failed to list sources');
             return response.json();
           })
           .then(data => {
             // Filter entries that have a source metadata
-            this.sources = data.filter(entry => entry.metadata && entry.metadata.source)
-              .map(entry => ({
-                url: entry.metadata.source,
-                update_interval: entry.metadata.update_interval || 60
-              }));
+            this.sources = data;
           })
           .catch(error => {
             console.error('Error listing sources:', error);

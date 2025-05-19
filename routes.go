@@ -78,6 +78,7 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 	e.DELETE("/api/collections/:name/entry/delete", deleteEntryFromCollection(collections))
 	e.POST("/api/collections/:name/sources", registerExternalSource(collections))
 	e.DELETE("/api/collections/:name/sources", removeExternalSource(collections))
+	e.GET("/api/collections/:name/sources", listSources(collections))
 }
 
 // createCollection handles creating a new collection
@@ -295,9 +296,6 @@ func registerExternalSource(collections collectionList) func(c echo.Context) err
 func removeExternalSource(collections collectionList) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		name := c.Param("name")
-		if _, exists := collections[name]; !exists {
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
-		}
 
 		type request struct {
 			URL string `json:"url"`
@@ -313,5 +311,31 @@ func removeExternalSource(collections collectionList) func(c echo.Context) error
 		}
 
 		return c.JSON(http.StatusOK, map[string]string{"message": "External source removed successfully"})
+	}
+}
+
+// listSources handles listing external sources for a collection
+func listSources(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+		}
+
+		// Get sources from the collection
+		sources := collection.GetExternalSources()
+
+		// Convert sources to a more frontend-friendly format
+		response := []map[string]interface{}{}
+		for _, source := range sources {
+			response = append(response, map[string]interface{}{
+				"url":             source.URL,
+				"update_interval": int(source.UpdateInterval.Minutes()),
+				"last_update":     source.LastUpdate.Format(time.RFC3339),
+			})
+		}
+
+		return c.JSON(http.StatusOK, response)
 	}
 }

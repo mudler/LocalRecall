@@ -68,6 +68,10 @@ func (db *LocalAIRAGDB) Delete(where map[string]string, whereDocuments map[strin
 	return fmt.Errorf("not implemented")
 }
 
+func (db *LocalAIRAGDB) GetByID(id string) (types.Result, error) {
+	return types.Result{}, fmt.Errorf("not implemented")
+}
+
 func (db *LocalAIRAGDB) Search(s string, similarEntries int) ([]types.Result, error) {
 	resp, err := db.openaiClient.CreateEmbeddings(context.TODO(),
 		openai.EmbeddingRequestStrings{

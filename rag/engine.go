@@ -11,4 +11,5 @@ type Engine interface {
 	Search(s string, similarEntries int) ([]types.Result, error)
 	Count() int
 	Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error
+	GetByID(id string) (types.Result, error)
 }

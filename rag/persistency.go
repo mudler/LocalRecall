@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/engine"
 )
 
@@ -193,11 +194,13 @@ func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 
 func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string) error {
 	db.Lock()
-	_, ok := db.index[entry]
+	fileName := filepath.Base(entry)
+	_, ok := db.index[fileName]
 	db.Unlock()
 	// Check if we have it already in the index
 	if ok {
-		if err := db.RemoveEntry(entry); err != nil {
+		xlog.Info("Data already exists for entry", "entry", entry, "index", db.index)
+		if err := db.RemoveEntry(fileName); err != nil {
 			return fmt.Errorf("failed to remove entry: %w", err)
 		}
 	}
@@ -231,6 +234,7 @@ func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]en
 // RemoveEntry removes an entry from the persistent knowledge base.
 func (db *PersistentKB) RemoveEntry(entry string) error {
 
+	xlog.Info("Removing entry", "entry", entry)
 	if os.Getenv("LOCALRECALL_REPOPULATE_DELETE") != "true" {
 		e := filepath.Join(db.assetDir, entry)
 		// results := db.index[filepath.Join(db.assetDir, entry)]
@@ -239,19 +243,38 @@ func (db *PersistentKB) RemoveEntry(entry string) error {
 		// 	db.Engine.Delete(r.ID)
 		// }
 
+		xlog.Info("Deleting entry from engine", "entry", entry)
 		if err := db.Engine.Delete(map[string]string{"source": entry}, map[string]string{}); err != nil {
 			return err
 		}
 
+		// Make sure entries are deleted
+		for _, id := range db.index[entry] {
+			res, err := db.Engine.GetByID(id.ID)
+			if err == nil {
+				xlog.Info("Result", "result", res)
+				xlog.Info("Deleting result from engine", "result", res)
+				err := db.Engine.Delete(map[string]string{}, map[string]string{}, res.ID)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
 		db.Lock()
+
+		xlog.Info("Deleting entry from index", "entry", entry)
 		delete(db.index, entry)
 
 		for i, f := range db.files {
 			if f == entry {
+				xlog.Info("Removing entry from files", "entry", entry)
 				db.files = append(db.files[:i], db.files[i+1:]...)
-				break
+				//break
 			}
 		}
+
+		xlog.Info("Removing entry from disk", "file", e)
 		os.Remove(e)
 		db.Unlock()
 		return db.save()
@@ -310,6 +333,7 @@ func (db *PersistentKB) RemoveExternalSource(url string) error {
 	for i, s := range db.sources {
 		if s.URL == url {
 			db.sources = append(db.sources[:i], db.sources[i+1:]...)
+
 			return db.save()
 		}
 	}

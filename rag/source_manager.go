@@ -92,7 +92,7 @@ func (sm *SourceManager) RemoveSource(collectionName, url string) error {
 		return err
 	}
 
-	if err := collection.Delete(map[string]string{"source": url}, map[string]string{}); err != nil {
+	if err := collection.RemoveEntry(fmt.Sprintf("source-%s-%s.txt", collectionName, sanitizeURL(url))); err != nil {
 		return err
 	}
 
@@ -124,7 +124,7 @@ func (sm *SourceManager) updateSource(collectionName string, source ExternalSour
 	sanitizedURL := sanitizeURL(source.URL)
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("source-%s-%s.txt", collectionName, sanitizedURL))
 	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
-		xlog.Error("Error creating temporary file", err)
+		xlog.Error("Error creating temporary file", "error", err)
 		return
 	}
 	defer os.Remove(tmpFile)
@@ -132,8 +132,8 @@ func (sm *SourceManager) updateSource(collectionName string, source ExternalSour
 	xlog.Info("Storing content in collection", "tmpFile", tmpFile)
 
 	// Store the content in the collection
-	if err := collection.StoreOrReplace(tmpFile, map[string]string{"source": source.URL}); err != nil {
-		xlog.Error("Error storing content in collection", err)
+	if err := collection.StoreOrReplace(tmpFile, map[string]string{"url": source.URL}); err != nil {
+		xlog.Error("Error storing content in collection", "error", err)
 	}
 
 	xlog.Info("Content stored in collection", "tmpFile", tmpFile)
