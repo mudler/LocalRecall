@@ -14,7 +14,6 @@ import (
 
 // CollectionState represents the persistent state of a collection
 type CollectionState struct {
-	Files           []string                   `json:"files"`
 	ExternalSources []ExternalSource           `json:"external_sources"`
 	Index           map[string][]engine.Result `json:"index"`
 }
@@ -22,7 +21,6 @@ type CollectionState struct {
 type PersistentKB struct {
 	Engine
 	sync.Mutex
-	files        []string
 	path         string
 	assetDir     string
 	maxChunkSize int
@@ -45,7 +43,6 @@ func loadDB(path string) (*CollectionState, error) {
 		if err := json.Unmarshal(data, &legacyFiles); err != nil {
 			return nil, err
 		}
-		state.Files = legacyFiles
 		state.ExternalSources = []ExternalSource{}
 		state.Index = map[string][]engine.Result{}
 	}
@@ -62,7 +59,6 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 
 	if _, err := os.Stat(stateFile); err != nil {
 		persistentKB := &PersistentKB{
-			files:        []string{},
 			path:         stateFile,
 			Engine:       store,
 			assetDir:     assetDir,
@@ -81,7 +77,6 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 	}
 	db := &PersistentKB{
 		Engine:       store,
-		files:        state.Files,
 		path:         stateFile,
 		maxChunkSize: maxChunkSize,
 		assetDir:     assetDir,
@@ -94,10 +89,9 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 
 func (db *PersistentKB) Reset() error {
 	db.Lock()
-	for _, f := range db.files {
+	for f := range db.index {
 		os.Remove(filepath.Join(db.assetDir, f))
 	}
-	db.files = []string{}
 	db.sources = []ExternalSource{}
 	db.index = map[string][]engine.Result{}
 	db.save()
@@ -111,7 +105,6 @@ func (db *PersistentKB) Reset() error {
 
 func (db *PersistentKB) save() error {
 	state := &CollectionState{
-		Files:           db.files,
 		ExternalSources: db.sources,
 		Index:           db.index,
 	}
@@ -133,7 +126,7 @@ func (db *PersistentKB) repopulate() error {
 	}
 
 	files := []string{}
-	for _, f := range db.files {
+	for f := range db.index {
 		files = append(files, filepath.Join(db.assetDir, f))
 	}
 
@@ -148,8 +141,12 @@ func (db *PersistentKB) repopulate() error {
 func (db *PersistentKB) ListDocuments() []string {
 	db.Lock()
 	defer db.Unlock()
+	files := []string{}
 
-	return db.files
+	for f := range db.index {
+		files = append(files, f)
+	}
+	return files
 }
 
 func (db *PersistentKB) EntryExists(entry string) bool {
@@ -158,7 +155,7 @@ func (db *PersistentKB) EntryExists(entry string) bool {
 
 	entry = filepath.Base(entry)
 
-	for _, e := range db.files {
+	for e := range db.index {
 		if e == entry {
 			return true
 		}
@@ -173,7 +170,6 @@ func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 	defer db.Unlock()
 
 	fileName := filepath.Base(entry)
-	db.files = append(db.files, fileName)
 
 	// copy file to assetDir (if it's a file)
 	if _, err := os.Stat(entry); err != nil {
@@ -266,14 +262,6 @@ func (db *PersistentKB) RemoveEntry(entry string) error {
 		xlog.Info("Deleting entry from index", "entry", entry)
 		delete(db.index, entry)
 
-		for i, f := range db.files {
-			if f == entry {
-				xlog.Info("Removing entry from files", "entry", entry)
-				db.files = append(db.files[:i], db.files[i+1:]...)
-				//break
-			}
-		}
-
 		xlog.Info("Removing entry from disk", "file", e)
 		os.Remove(e)
 		db.Unlock()
@@ -281,9 +269,8 @@ func (db *PersistentKB) RemoveEntry(entry string) error {
 	}
 
 	db.Lock()
-	for i, e := range db.files {
+	for e := range db.index {
 		if e == entry {
-			db.files = append(db.files[:i], db.files[i+1:]...)
 			os.Remove(filepath.Join(db.assetDir, e))
 			break
 		}
