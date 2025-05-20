@@ -17,7 +17,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - 8080:8080
-    env_file: ".env"
+    #env_file: ".env"
     environment:
       - COLLECTION_DB_PATH=/db
       - EMBEDDING_MODEL=granite-embedding-107m-multilingual
