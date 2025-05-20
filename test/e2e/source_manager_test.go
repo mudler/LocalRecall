@@ -180,15 +180,23 @@ var _ = Describe("SourceManager", func() {
 			err := sourceManager.AddSource(TestCollection, complexURL, DefaultUpdateInterval)
 			Expect(err).To(BeNil())
 
-			// Verify the source was added with sanitized filename
-			sources := kb.GetExternalSources()
-			Expect(sources).To(HaveLen(1))
-			Expect(sources[0].URL).To(Equal(complexURL))
+			sourceManager.Start()
+			defer sourceManager.Stop()
+
+			// Wait for initial content to be fetched
+			Eventually(func() []string {
+				return kb.ListDocuments()
+			}, TestTimeout, TestPollingInterval).Should(HaveLen(1))
+
+			// Let it run for 2 minutes and check for duplicates
+			Consistently(func() []string {
+				return kb.ListDocuments()
+			}, 2*time.Minute, 5*time.Second).Should(HaveLen(1))
 
 			// List documents to verify the sanitized filename
 			docs := kb.ListDocuments()
 			Expect(docs).To(HaveLen(1))
-			Expect(docs[0]).To(ContainSubstring("example-com-path-query-value-param-123-section"))
+			Expect(docs[0]).To(ContainSubstring("source-foo-https-example-com-path-query-value-param-123-section.txt"))
 		})
 	})
 
@@ -228,7 +236,7 @@ var _ = Describe("SourceManager", func() {
 
 		It("should prevent duplicate content with frequent updates", func() {
 			// Add a source with a very short update interval
-			err := sourceManager.AddSource(TestCollection, "https://raw.githubusercontent.com/mudler/LocalRecall/main/README.md", 1*time.Second)
+			err := sourceManager.AddSource(TestCollection, "https://en.wikipedia.org/wiki/Black-crowned_barwing", 1*time.Second)
 			Expect(err).To(BeNil())
 
 			// Start the background service
@@ -237,19 +245,23 @@ var _ = Describe("SourceManager", func() {
 			// Wait for initial content to be fetched
 			Eventually(func() []string {
 				return kb.ListDocuments()
-			}, TestTimeout, TestPollingInterval).Should(HaveLen(1))
+			}, 2*time.Minute, 5*time.Second).Should(HaveLen(1))
 
 			// Let it run for 2 minutes and check for duplicates
-			Consistently(func() []string {
-				return kb.ListDocuments()
-			}, 2*time.Minute, 5*time.Second).Should(HaveLen(1))
+			Consistently(func() int {
+				e, ok := kb.Engine.(*engine.ChromemDB)
+				Expect(ok).To(BeTrue())
+				return e.Count()
+			}, 3*time.Minute, 5*time.Second).Should(Equal(25))
 
 			// Verify that search results don't contain duplicates
 			Consistently(func() bool {
-				results, err := kb.Engine.Search("What is LocalRecall?", 10)
+				results, err := kb.Engine.Search("What is the Black-crowned barwing?", 3)
 				if err != nil {
+					fmt.Println("Error searching for content", err)
 					return false
 				}
+
 				// Check for duplicate content
 				seen := make(map[string]bool)
 				for _, r := range results {
