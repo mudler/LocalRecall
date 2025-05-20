@@ -117,13 +117,13 @@ var _ = Describe("SourceManager", func() {
 		It("should not add sources to non-existent collections", func() {
 			err := sourceManager.AddSource("non-existent", "https://example.com", DefaultUpdateInterval)
 			Expect(err).ToNot(BeNil())
-			Expect(err.Error()).To(ContainSubstring("collection not found"))
+			Expect(err.Error()).To(ContainSubstring("collection non-existent not found"))
 		})
 
 		It("should not remove sources from non-existent collections", func() {
 			err := sourceManager.RemoveSource("non-existent", "https://example.com")
 			Expect(err).ToNot(BeNil())
-			Expect(err.Error()).To(ContainSubstring("collection not found"))
+			Expect(err.Error()).To(ContainSubstring("collection non-existent not found"))
 		})
 	})
 
@@ -169,6 +169,10 @@ var _ = Describe("SourceManager", func() {
 	})
 
 	Context("URL Sanitization", func() {
+		BeforeEach(func() {
+			sourceManager.RegisterCollection(TestCollection, kb)
+		})
+
 		It("should sanitize URLs for filesystem safety", func() {
 			// Add a source with a complex URL
 			complexURL := "https://example.com/path?query=value&param=123#section"
@@ -241,7 +245,7 @@ var _ = Describe("SourceManager", func() {
 
 			// Verify that search results don't contain duplicates
 			Consistently(func() bool {
-				results, err := kb.Engine.Search("What is LocalRecall?", 5)
+				results, err := kb.Engine.Search("What is LocalRecall?", 10)
 				if err != nil {
 					return false
 				}
