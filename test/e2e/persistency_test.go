@@ -33,17 +33,14 @@ var _ = Describe("Persistency", func() {
 		stateFile = filepath.Join(tempDir, "state.json")
 		assetDir = filepath.Join(tempDir, "assets")
 
-		config := openai.DefaultConfig("foo")
-		config.BaseURL = localAIEndpoint
-
-		localAI = openai.NewClientWithConfig(config)
+		localAI = openai.NewClientWithConfig(NewTestOpenAIConfig())
 
 		// Create Chromem engine
-		chromemEngine, err := engine.NewChromemDBCollection("test-collection", tempDir, localAI, "granite-embedding-107m-multilingual")
+		chromemEngine, err := engine.NewChromemDBCollection(TestCollection, tempDir, localAI, EmbeddingModel)
 		Expect(err).To(BeNil())
 
 		// Create new PersistentKB
-		kb, err = rag.NewPersistentCollectionKB(stateFile, assetDir, chromemEngine, 1000)
+		kb, err = rag.NewPersistentCollectionKB(stateFile, assetDir, chromemEngine, DefaultChunkSize)
 		Expect(err).To(BeNil())
 	})
 
@@ -122,7 +119,7 @@ var _ = Describe("Persistency", func() {
 		It("should add and remove external sources", func() {
 			source := rag.ExternalSource{
 				URL:            "https://example.com",
-				UpdateInterval: time.Hour,
+				UpdateInterval: DefaultUpdateInterval,
 				LastUpdate:     time.Now(),
 			}
 
@@ -143,7 +140,7 @@ var _ = Describe("Persistency", func() {
 		It("should not add duplicate external sources", func() {
 			source := rag.ExternalSource{
 				URL:            "https://example.com",
-				UpdateInterval: time.Hour,
+				UpdateInterval: DefaultUpdateInterval,
 				LastUpdate:     time.Now(),
 			}
 
