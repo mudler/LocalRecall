@@ -31,7 +31,7 @@ func (db *LocalAIRAGDB) Count() int {
 	return 0
 }
 
-func (db *LocalAIRAGDB) Store(s string, metadata map[string]string) error {
+func (db *LocalAIRAGDB) Store(s string, metadata map[string]string) (Result, error) {
 	resp, err := db.openaiClient.CreateEmbeddings(context.TODO(),
 		openai.EmbeddingRequestStrings{
 			Input: []string{s},
@@ -39,11 +39,11 @@ func (db *LocalAIRAGDB) Store(s string, metadata map[string]string) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("error getting keys: %v", err)
+		return Result{}, fmt.Errorf("error getting keys: %v", err)
 	}
 
 	if len(resp.Data) == 0 {
-		return fmt.Errorf("no response from OpenAI API")
+		return Result{}, fmt.Errorf("no response from OpenAI API")
 	}
 
 	embedding := resp.Data[0].Embedding
@@ -54,10 +54,22 @@ func (db *LocalAIRAGDB) Store(s string, metadata map[string]string) error {
 	}
 	err = db.client.Set(setReq)
 	if err != nil {
-		return fmt.Errorf("error setting keys: %v", err)
+		return Result{}, fmt.Errorf("error setting keys: %v", err)
 	}
 
-	return nil
+	fmt.Println("LocalAI stores don't support IDs, so we can't delete entries once created. This is not implemented yet.")
+	return Result{
+		// TODO: LocalAI should return an ID so can be properly deleted. This is not implemented now
+		ID: "",
+	}, nil
+}
+
+func (db *LocalAIRAGDB) Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (db *LocalAIRAGDB) GetByID(id string) (types.Result, error) {
+	return types.Result{}, fmt.Errorf("not implemented")
 }
 
 func (db *LocalAIRAGDB) Search(s string, similarEntries int) ([]types.Result, error) {

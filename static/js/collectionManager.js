@@ -4,10 +4,14 @@ function collectionManager() {
       selectedCollection: '',
       selectedListCollection: '',
       selectedSearchCollection: '',
+      selectedSourceCollection: '',
       searchQuery: '',
       maxResults: 5,
+      newSourceURL: '',
+      newSourceInterval: 60,
       collections: [],
       entries: [],
+      sources: [],
       searchResults: [],
       searchError: '',
       searchTimestamp: '',
@@ -20,7 +24,10 @@ function collectionManager() {
         entries: false,
         delete: false,
         search: false,
-        reset: false
+        reset: false,
+        sources: false,
+        addSource: false,
+        removeSource: false
       },
       
       toggleDarkMode() {
@@ -279,6 +286,92 @@ function collectionManager() {
           timer: 3000,
           timerProgressBar: true
         });
+      },
+
+      listSources() {
+        if (!this.selectedSourceCollection) return;
+        
+        this.loading.sources = true;
+        this.sources = [];
+        
+        // Get sources from the collection's entries
+        fetch(`/api/collections/${this.selectedSourceCollection}/sources`)
+          .then(response => {
+            if (!response.ok) throw new Error('Failed to list sources');
+            return response.json();
+          })
+          .then(data => {
+            // Filter entries that have a source metadata
+            this.sources = data;
+          })
+          .catch(error => {
+            console.error('Error listing sources:', error);
+            this.showToast('error', 'Failed to fetch sources');
+          })
+          .finally(() => {
+            this.loading.sources = false;
+          });
+      },
+
+      addSource() {
+        if (!this.selectedSourceCollection) return this.showToast('warning', 'Please select a collection');
+        if (!this.newSourceURL) return this.showToast('warning', 'Please enter a source URL');
+        
+        const interval = parseInt(this.newSourceInterval) || 60;
+        if (interval < 1) return this.showToast('warning', 'Update interval must be at least 1 minute');
+        
+        this.loading.addSource = true;
+        fetch(`/api/collections/${this.selectedSourceCollection}/sources`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            url: this.newSourceURL,
+            update_interval: interval
+          })
+        })
+          .then(response => {
+            if (!response.ok) throw new Error('Failed to add source');
+            return response.json();
+          })
+          .then(() => {
+            this.showToast('success', 'Source added successfully');
+            this.newSourceURL = '';
+            this.newSourceInterval = 60;
+            this.listSources();
+          })
+          .catch(error => {
+            console.error('Error adding source:', error);
+            this.showToast('error', 'Failed to add source');
+          })
+          .finally(() => {
+            this.loading.addSource = false;
+          });
+      },
+
+      removeSource(url) {
+        if (!this.selectedSourceCollection) return this.showToast('warning', 'Please select a collection');
+        
+        this.loading.removeSource = url;
+        fetch(`/api/collections/${this.selectedSourceCollection}/sources`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: url })
+        })
+          .then(response => {
+            if (!response.ok) throw new Error('Failed to remove source');
+            return response.json();
+          })
+          .then(() => {
+            this.showToast('success', 'Source removed successfully');
+            this.listSources();
+          })
+          .catch(error => {
+            console.error('Error removing source:', error);
+            this.showToast('error', 'Failed to remove source');
+          })
+          .finally(() => {
+            this.loading.removeSource = false;
+          });
       },
 
       init() {

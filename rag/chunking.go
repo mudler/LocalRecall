@@ -15,7 +15,7 @@ import (
 	"jaytaylor.com/html2text"
 )
 
-func getWebPage(url string) (string, error) {
+func GetWebPage(url string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
@@ -32,7 +32,7 @@ func getWebPage(url string) (string, error) {
 func getWebSitemap(url string) (res []string, err error) {
 	err = sitemap.ParseFromSite(url, func(e sitemap.Entry) error {
 		xlog.Info("Sitemap page: " + e.GetLocation())
-		content, err := getWebPage(e.GetLocation())
+		content, err := GetWebPage(e.GetLocation())
 		if err == nil {
 			res = append(res, content)
 		}

@@ -117,6 +117,95 @@
             </div>
           </div>
           
+          <!-- External Sources Card -->
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
+            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <div class="flex items-center">
+                <i class="fas fa-globe text-blue-600 dark:text-blue-400 mr-2"></i>
+                <h2 class="text-xl font-semibold">External Sources</h2>
+              </div>
+            </div>
+            <div class="p-5 space-y-4">
+              <div class="flex flex-col space-y-3">
+                <select 
+                  x-model="selectedSourceCollection" 
+                  @change="listSources" 
+                  class="border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                >
+                  <option value="" disabled>Select a Collection</option>
+                  <template x-for="collection in collections" :key="collection">
+                    <option :value="collection" x-text="collection"></option>
+                  </template>
+                </select>
+                
+                <div class="flex flex-col space-y-2">
+                  <input 
+                    type="text" 
+                    placeholder="Source URL" 
+                    x-model="newSourceURL" 
+                    class="border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  >
+                  <div class="flex items-center space-x-2">
+                    <input 
+                      type="number" 
+                      min="1" 
+                      placeholder="Update interval (minutes)" 
+                      x-model="newSourceInterval" 
+                      class="w-1/2 border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    >
+                    <button 
+                      @click="addSource" 
+                      class="w-1/2 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                      :disabled="loading.addSource"
+                    >
+                      <i class="fas fa-spinner fa-spin mr-2" x-show="loading.addSource"></i>
+                      <span x-text="loading.addSource ? 'Adding...' : 'Add Source'"></span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="mt-4">
+                  <div class="flex items-center justify-between pb-2 border-b dark:border-gray-700">
+                    <h3 class="font-bold">Registered Sources</h3>
+                    <div x-show="loading.sources" class="text-blue-600 dark:text-blue-400">
+                      <i class="fas fa-spinner fa-spin"></i>
+                    </div>
+                  </div>
+                  <div class="max-h-60 overflow-y-auto mt-2">
+                    <ul class="space-y-2">
+                      <template x-if="!sources.length && !loading.sources">
+                        <li class="text-center py-8 text-gray-500 dark:text-gray-400">
+                          <i class="fas fa-globe text-2xl mb-2"></i>
+                          <p>No sources registered</p>
+                        </li>
+                      </template>
+                      <template x-for="source in sources" :key="source.url">
+                        <li class="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-650 group transition-all">
+                          <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-2 max-w-[80%]">
+                              <i class="fas fa-globe text-blue-600 dark:text-blue-400"></i>
+                              <div class="flex flex-col">
+                                <span class="truncate" x-text="source.url"></span>
+                                <span class="text-xs text-gray-500 dark:text-gray-400" x-text="'Update every ' + source.update_interval + ' minutes'"></span>
+                              </div>
+                            </div>
+                            <button 
+                              @click="removeSource(source.url)" 
+                              class="text-red-500 hover:text-red-700 p-1 opacity-0 group-hover:opacity-100 transition-all focus:outline-none"
+                              :disabled="loading.removeSource === source.url"
+                            >
+                              <i class="fas" :class="loading.removeSource === source.url ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
+                            </button>
+                          </div>
+                        </li>
+                      </template>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <!-- Collections List Card -->
           <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
             <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">

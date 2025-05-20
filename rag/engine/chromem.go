@@ -83,20 +83,40 @@ func (c *ChromemDB) embedding() chromem.EmbeddingFunc {
 	)
 }
 
-func (c *ChromemDB) Store(s string, metadata map[string]string) error {
+func (c *ChromemDB) Store(s string, metadata map[string]string) (Result, error) {
 	defer func() {
 		c.index++
 	}()
 	if s == "" {
-		return fmt.Errorf("empty string")
+		return Result{}, fmt.Errorf("empty string")
 	}
-	return c.collection.AddDocuments(context.Background(), []chromem.Document{
+
+	if err := c.collection.AddDocuments(context.Background(), []chromem.Document{
 		{
 			Metadata: metadata,
 			Content:  s,
 			ID:       fmt.Sprint(c.index),
 		},
-	}, runtime.NumCPU())
+	}, runtime.NumCPU()); err != nil {
+		return Result{}, err
+	}
+
+	return Result{
+		ID: fmt.Sprint(c.index),
+	}, nil
+}
+
+func (c *ChromemDB) Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error {
+	return c.collection.Delete(context.Background(), where, whereDocuments, ids...)
+}
+
+func (c *ChromemDB) GetByID(id string) (types.Result, error) {
+	res, err := c.collection.GetByID(context.Background(), id)
+	if err != nil {
+		return types.Result{}, err
+	}
+
+	return types.Result{ID: res.ID, Metadata: res.Metadata, Content: res.Content}, nil
 }
 
 func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error) {

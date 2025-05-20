@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/mudler/localrecall/pkg/xlog"
@@ -43,7 +44,10 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 	// Load all collections
 	colls := rag.ListAllCollections(collectionDBPath)
 	for _, c := range colls {
-		collections[c] = newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel, maxChunkingSize)
+		collection := newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel, maxChunkingSize)
+		collections[c] = collection
+		// Register the collection with the source manager
+		sourceManager.RegisterCollection(c, collection)
 	}
 
 	if len(apiKeys) > 0 {
@@ -72,6 +76,9 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 	e.POST("/api/collections/:name/search", search(collections))
 	e.POST("/api/collections/:name/reset", reset(collections))
 	e.DELETE("/api/collections/:name/entry/delete", deleteEntryFromCollection(collections))
+	e.POST("/api/collections/:name/sources", registerExternalSource(collections))
+	e.DELETE("/api/collections/:name/sources", removeExternalSource(collections))
+	e.GET("/api/collections/:name/sources", listSources(collections))
 }
 
 // createCollection handles creating a new collection
@@ -86,8 +93,13 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
 		}
 
-		collections[r.Name] = newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel, maxChunkingSize)
-		return c.JSON(http.StatusCreated, collections[r.Name])
+		collection := newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel, maxChunkingSize)
+		collections[r.Name] = collection
+
+		// Register the new collection with the source manager
+		sourceManager.RegisterCollection(r.Name, collection)
+
+		return c.JSON(http.StatusCreated, collection)
 	}
 }
 
@@ -230,7 +242,7 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		}
 
 		// Save the file to disk
-		err = collection.Store(filePath)
+		err = collection.Store(filePath, map[string]string{})
 		if err != nil {
 			xlog.Error("Failed to store file", err)
 			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to store file: "+err.Error()))
@@ -243,4 +255,87 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 // listCollections returns all collections
 func listCollections(c echo.Context) error {
 	return c.JSON(http.StatusOK, rag.ListAllCollections(collectionDBPath))
+}
+
+// registerExternalSource handles registering an external source for a collection
+func registerExternalSource(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+		}
+
+		type request struct {
+			URL            string `json:"url"`
+			UpdateInterval int    `json:"update_interval"` // in minutes
+		}
+
+		r := new(request)
+		if err := c.Bind(r); err != nil {
+			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
+		}
+
+		if r.UpdateInterval < 1 {
+			r.UpdateInterval = 60 // default to 1 hour if not specified
+		}
+
+		// Register the collection with the source manager if not already registered
+		sourceManager.RegisterCollection(name, collection)
+
+		// Add the source to the manager
+		if err := sourceManager.AddSource(name, r.URL, time.Duration(r.UpdateInterval)*time.Minute); err != nil {
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to register source: "+err.Error()))
+		}
+
+		return c.JSON(http.StatusOK, map[string]string{"message": "External source registered successfully"})
+	}
+}
+
+// removeExternalSource handles removing an external source from a collection
+func removeExternalSource(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+
+		type request struct {
+			URL string `json:"url"`
+		}
+
+		r := new(request)
+		if err := c.Bind(r); err != nil {
+			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
+		}
+
+		if err := sourceManager.RemoveSource(name, r.URL); err != nil {
+			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to remove source: "+err.Error()))
+		}
+
+		return c.JSON(http.StatusOK, map[string]string{"message": "External source removed successfully"})
+	}
+}
+
+// listSources handles listing external sources for a collection
+func listSources(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+		}
+
+		// Get sources from the collection
+		sources := collection.GetExternalSources()
+
+		// Convert sources to a more frontend-friendly format
+		response := []map[string]interface{}{}
+		for _, source := range sources {
+			response = append(response, map[string]interface{}{
+				"url":             source.URL,
+				"update_interval": int(source.UpdateInterval.Minutes()),
+				"last_update":     source.LastUpdate.Format(time.RFC3339),
+			})
+		}
+
+		return c.JSON(http.StatusOK, response)
+	}
 }

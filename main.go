@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/mudler/localrecall/rag"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -20,6 +21,7 @@ var (
 	vectorEngine     = os.Getenv("VECTOR_ENGINE")
 	maxChunkingSize  = os.Getenv("MAX_CHUNKING_SIZE")
 	apiKeys          = os.Getenv("API_KEYS")
+	sourceManager    = rag.NewSourceManager()
 )
 
 func init() {
@@ -38,6 +40,9 @@ func init() {
 	if vectorEngine == "" {
 		vectorEngine = "chromem"
 	}
+
+	// Start the source manager
+	sourceManager.Start()
 }
 
 func startAPI(listenAddress string) {
