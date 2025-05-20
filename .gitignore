@@ -3,5 +3,5 @@ localrecall
 collections/
 state/
 assets/
-
+localrag
 .env
