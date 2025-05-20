@@ -7,6 +7,13 @@ on:
   pull_request:
     branches:
       - '**'
+
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}-${{ github.repository }}
+  cancel-in-progress: true
+
+
 jobs:
   test:
     runs-on: ubuntu-latest
