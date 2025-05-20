@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -253,6 +254,7 @@ var _ = Describe("SourceManager", func() {
 				seen := make(map[string]bool)
 				for _, r := range results {
 					if seen[r.Content] {
+						fmt.Println("Found a duplicate", r.Content)
 						return false // Found a duplicate
 					}
 					seen[r.Content] = true
