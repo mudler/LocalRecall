@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mudler/localrecall/pkg/xlog"
+	"github.com/mudler/localrecall/rag/sources"
 )
 
 // ExternalSource represents a source that needs to be periodically updated
@@ -112,7 +113,7 @@ func (sm *SourceManager) RemoveSource(collectionName, url string) error {
 func (sm *SourceManager) updateSource(collectionName string, source ExternalSource, collection *PersistentKB) {
 
 	xlog.Info("Updating source", "url", source.URL)
-	content, err := GetWebPage(source.URL)
+	content, err := sources.SourceRouter(source.URL)
 	if err != nil {
 		xlog.Error("Error updating source", err)
 		return

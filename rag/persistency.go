@@ -1,13 +1,17 @@
 package rag
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"os"
 	"sync"
 
+	"github.com/dslipak/pdf"
+	"github.com/mudler/localrecall/pkg/chunk"
 	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/engine"
 )
@@ -287,6 +291,51 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dst, filepath.Base(src)), in, 0644)
+}
+
+func chunkFile(fpath string, maxchunksize int) ([]string, error) {
+	if _, err := os.Stat(fpath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("file does not exist: %s", fpath)
+	}
+
+	// Get file extension:
+	// If it's a .txt file, read the file and split it into chunks.
+	// If it's a .pdf file, convert it to text and split it into chunks.
+	// ...
+	extension := filepath.Ext(fpath)
+	switch extension {
+	case ".pdf":
+		r, err := pdf.Open(fpath)
+		if err != nil {
+			return nil, err
+		}
+		var buf bytes.Buffer
+		b, err := r.GetPlainText()
+		if err != nil {
+			return nil, err
+		}
+		buf.ReadFrom(b)
+		return chunk.SplitParagraphIntoChunks(buf.String(), maxchunksize), nil
+	case ".txt", ".md":
+		xlog.Debug("Reading text file: ", fpath)
+		f, err := os.Open(fpath)
+		if err != nil {
+			xlog.Error("Error opening file: ", fpath)
+			return nil, err
+		}
+		defer f.Close()
+		content, err := io.ReadAll(f)
+		if err != nil {
+			xlog.Error("Error reading file: ", fpath)
+			return nil, err
+		}
+		return chunk.SplitParagraphIntoChunks(string(content), maxchunksize), nil
+
+	default:
+		xlog.Error("Unsupported file type: ", extension)
+	}
+
+	return nil, fmt.Errorf("not implemented")
 }
 
 // GetExternalSources returns the list of external sources for this collection
