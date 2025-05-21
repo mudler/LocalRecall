@@ -247,16 +247,19 @@ var _ = Describe("SourceManager", func() {
 				return kb.ListDocuments()
 			}, 2*time.Minute, 5*time.Second).Should(HaveLen(1))
 
+			// Wait for initial content to be fetched
+			Eventually(func() int {
+				return kb.Count()
+			}, 2*time.Minute, 5*time.Second).Should(Equal(25))
+
 			// Let it run for 2 minutes and check for duplicates
 			Consistently(func() int {
-				e, ok := kb.Engine.(*engine.ChromemDB)
-				Expect(ok).To(BeTrue())
-				return e.Count()
+				return kb.Count()
 			}, 3*time.Minute, 5*time.Second).Should(Equal(25))
 
 			// Verify that search results don't contain duplicates
 			Consistently(func() bool {
-				results, err := kb.Engine.Search("What is the Black-crowned barwing?", 3)
+				results, err := kb.Search("What is the Black-crowned barwing?", 5)
 				if err != nil {
 					fmt.Println("Error searching for content", err)
 					return false

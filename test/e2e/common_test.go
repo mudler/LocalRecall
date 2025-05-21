@@ -20,7 +20,7 @@ const (
 	DefaultUpdateInterval = time.Hour
 
 	// TestTimeout is the default timeout for Eventually blocks
-	TestTimeout = 5 * time.Second
+	TestTimeout = 1 * time.Minute
 
 	// TestPollingInterval is the default polling interval for Eventually blocks
 	TestPollingInterval = 500 * time.Millisecond

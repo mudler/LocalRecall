@@ -52,7 +52,7 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 
 	// TODO: This does not work as we do not have .Reset().
 	// The problem is that LocalAI stores are not persistent either and do not allow upserts.
-	persistentKB.repopulate()
+	persistentKB.Repopulate()
 
 	return persistentKB
 }
