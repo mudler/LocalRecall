@@ -1,6 +1,7 @@
 package rag
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,13 +25,18 @@ type SourceManager struct {
 	sources     map[string][]ExternalSource // collection name -> sources
 	collections map[string]*PersistentKB    // collection name -> collection
 	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // NewSourceManager creates a new source manager
 func NewSourceManager() *SourceManager {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &SourceManager{
 		sources:     make(map[string][]ExternalSource),
 		collections: make(map[string]*PersistentKB),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
@@ -182,17 +188,27 @@ func (sm *SourceManager) Start() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			sm.mu.RLock()
-			for collectionName, sources := range sm.sources {
-				collection := sm.collections[collectionName]
-				for _, source := range sources {
-					if time.Since(source.LastUpdate) >= source.UpdateInterval {
-						go sm.updateSource(collectionName, source, collection)
+		for {
+			select {
+			case <-sm.ctx.Done():
+				return
+			case <-ticker.C:
+				sm.mu.RLock()
+				for collectionName, sources := range sm.sources {
+					collection := sm.collections[collectionName]
+					for _, source := range sources {
+						if time.Since(source.LastUpdate) >= source.UpdateInterval {
+							go sm.updateSource(collectionName, source, collection)
+						}
 					}
 				}
+				sm.mu.RUnlock()
 			}
-			sm.mu.RUnlock()
 		}
 	}()
+}
+
+// Stop stops the background service
+func (sm *SourceManager) Stop() {
+	sm.cancel()
 }

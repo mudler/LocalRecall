@@ -14,6 +14,7 @@ import (
 	"github.com/mudler/localrecall/pkg/chunk"
 	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/engine"
+	"github.com/mudler/localrecall/rag/types"
 )
 
 // CollectionState represents the persistent state of a collection
@@ -91,6 +92,13 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 	return db, nil
 }
 
+func (db *PersistentKB) Search(s string, similarEntries int) ([]types.Result, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	return db.Engine.Search(s, similarEntries)
+}
+
 func (db *PersistentKB) Reset() error {
 	db.Lock()
 	for f := range db.index {
@@ -120,10 +128,15 @@ func (db *PersistentKB) save() error {
 	return os.WriteFile(db.path, data, 0644)
 }
 
-// repopulate reinitializes the persistent knowledge base with the files that were added to it.
-func (db *PersistentKB) repopulate() error {
+func (db *PersistentKB) Count() int {
 	db.Lock()
 	defer db.Unlock()
+
+	return db.Engine.Count()
+}
+
+// repopulate reinitializes the persistent knowledge base with the files that were added to it.
+func (db *PersistentKB) repopulate() error {
 
 	if err := db.Engine.Reset(); err != nil {
 		return fmt.Errorf("failed to reset engine: %w", err)
@@ -139,6 +152,13 @@ func (db *PersistentKB) repopulate() error {
 	}
 
 	return nil
+}
+
+func (db *PersistentKB) Repopulate() error {
+	db.Lock()
+	defer db.Unlock()
+
+	return db.repopulate()
 }
 
 // Store stores an entry in the persistent knowledge base.
@@ -173,6 +193,10 @@ func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 	db.Lock()
 	defer db.Unlock()
 
+	return db.storeFile(entry, metadata)
+}
+
+func (db *PersistentKB) storeFile(entry string, metadata map[string]string) error {
 	fileName := filepath.Base(entry)
 
 	// copy file to assetDir (if it's a file)
@@ -194,18 +218,19 @@ func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 
 func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string) error {
 	db.Lock()
+	defer db.Unlock()
+
 	fileName := filepath.Base(entry)
 	_, ok := db.index[fileName]
-	db.Unlock()
 	// Check if we have it already in the index
 	if ok {
 		xlog.Info("Data already exists for entry", "entry", entry, "index", db.index)
-		if err := db.RemoveEntry(fileName); err != nil {
+		if err := db.removeFileEntry(fileName); err != nil {
 			return fmt.Errorf("failed to remove entry: %w", err)
 		}
 	}
 
-	return db.Store(entry, metadata)
+	return db.storeFile(entry, metadata)
 }
 
 func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]engine.Result, error) {
@@ -231,8 +256,14 @@ func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]en
 	return results, nil
 }
 
-// RemoveEntry removes an entry from the persistent knowledge base.
 func (db *PersistentKB) RemoveEntry(entry string) error {
+	db.Lock()
+	defer db.Unlock()
+
+	return db.removeFileEntry(entry)
+}
+
+func (db *PersistentKB) removeFileEntry(entry string) error {
 
 	xlog.Info("Removing entry", "entry", entry)
 	if os.Getenv("LOCALRECALL_REPOPULATE_DELETE") != "true" {
@@ -261,25 +292,20 @@ func (db *PersistentKB) RemoveEntry(entry string) error {
 			}
 		}
 
-		db.Lock()
-
 		xlog.Info("Deleting entry from index", "entry", entry)
 		delete(db.index, entry)
 
 		xlog.Info("Removing entry from disk", "file", e)
 		os.Remove(e)
-		db.Unlock()
 		return db.save()
 	}
 
-	db.Lock()
 	for e := range db.index {
 		if e == entry {
 			os.Remove(filepath.Join(db.assetDir, e))
 			break
 		}
 	}
-	db.Unlock()
 
 	// TODO: this is suboptimal, but currently chromem does not support deleting single entities
 	return db.repopulate()

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/mudler/localrecall/pkg/client"
 	. "github.com/onsi/ginkgo/v2"
@@ -64,88 +63,83 @@ var _ = Describe("API", func() {
 			Skip("Skipping E2E tests")
 		}
 
-		config := openai.DefaultConfig("foo")
-		config.BaseURL = localAIEndpoint
-
-		localAI = openai.NewClientWithConfig(config)
+		localAI = openai.NewClientWithConfig(NewTestOpenAIConfig())
 		localRecall = client.NewClient(localRecallEndpoint)
 
 		Eventually(func() error {
-
 			res, err := localAI.CreateEmbeddings(context.Background(), openai.EmbeddingRequest{
-				Model: "granite-embedding-107m-multilingual",
+				Model: EmbeddingModel,
 				Input: "foo",
 			})
 			if len(res.Data) == 0 {
 				return fmt.Errorf("no data")
 			}
 			return err
-		}, 5*time.Minute, time.Second).Should(Succeed())
+		}, TestTimeout, TestPollingInterval).Should(Succeed())
 
 		Eventually(func() error {
 			_, err := localRecall.ListCollections()
-
 			return err
-		}, 5*time.Minute, time.Second).Should(Succeed())
+		}, TestTimeout, TestPollingInterval).Should(Succeed())
 
-		localRecall.Reset(testCollection)
+		localRecall.Reset(TestCollection)
 	})
 
 	It("should create collections", func() {
-		err := localRecall.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(TestCollection)
 		Expect(err).To(BeNil())
 
 		collections, err := localRecall.ListCollections()
 		Expect(err).To(BeNil())
-		Expect(collections).To(ContainElement(testCollection))
+		Expect(collections).To(ContainElement(TestCollection))
 	})
 
 	It("should search between documents", func() {
-		err := localRecall.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(TestCollection)
 		Expect(err).ToNot(HaveOccurred())
 
 		tempContent(story1, localRecall)
 		tempContent(story2, localRecall)
-		expectContent("foo", "spiders", "spider", localRecall)
-		expectContent("foo", "heist", "the Great Pigeon Heist", localRecall)
+		expectContent(TestCollection, "spiders", "spider", localRecall)
+		expectContent(TestCollection, "heist", "the Great Pigeon Heist", localRecall)
 	})
 
 	It("should reset collections", func() {
-		err := localRecall.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(TestCollection)
 		Expect(err).To(BeNil())
 
 		tempContent(story1, localRecall)
 		tempContent(story2, localRecall)
 
-		err = localRecall.Reset(testCollection)
+		err = localRecall.Reset(TestCollection)
 		Expect(err).To(BeNil())
 
-		docs, err := localRecall.Search(testCollection, "spiders", 1)
+		docs, err := localRecall.Search(TestCollection, "spiders", 1)
 		Expect(err).To(HaveOccurred())
 		Expect(docs).To(BeNil())
 		Expect(err.Error()).To(ContainSubstring("failed to search collection"))
 	})
 
 	It("should be able to delete documents", func() {
-		err := localRecall.CreateCollection(testCollection)
+		err := localRecall.CreateCollection(TestCollection)
 		Expect(err).ToNot(HaveOccurred())
 
 		tempContent(story1, localRecall)
 		fileName := tempContent(story2, localRecall)
 
-		entries, err := localRecall.ListEntries(testCollection)
+		entries, err := localRecall.ListEntries(TestCollection)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(entries).To(HaveLen(2))
 
-		expectContent("foo", "spiders", "spider", localRecall)
-		expectContent("foo", "heist", "the Great Pigeon Heist", localRecall)
+		expectContent(TestCollection, "spiders", "spider", localRecall)
+		expectContent(TestCollection, "heist", "the Great Pigeon Heist", localRecall)
 
 		entry := fileName
-		entries, err = localRecall.DeleteEntry(testCollection, entry)
+		entries, err = localRecall.DeleteEntry(TestCollection, entry)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(entries).To(HaveLen(1))
 
-		expectContent("foo", "heist", "the Great Pigeon Heist", localRecall)
+		expectContent(TestCollection, "heist", "the Great Pigeon Heist", localRecall)
 	})
 })
 
@@ -167,7 +161,7 @@ func tempContent(content string, localRecall *client.Client) string {
 	_, err = ff.WriteString(content)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
-	err = localRecall.Store(testCollection, ff.Name())
+	err = localRecall.Store(TestCollection, ff.Name())
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
 	return fileName
