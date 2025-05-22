@@ -106,6 +106,35 @@ func (c *ChromemDB) Store(s string, metadata map[string]string) (Result, error) 
 	}, nil
 }
 
+func (c *ChromemDB) StoreDocuments(s []string, metadata map[string]string) ([]Result, error) {
+	defer func() {
+		c.index += len(s)
+	}()
+
+	if len(s) == 0 {
+		return nil, fmt.Errorf("empty string")
+	}
+
+	results := make([]Result, len(s))
+	documents := make([]chromem.Document, len(s))
+	for i, content := range s {
+		documents[i] = chromem.Document{
+			Metadata: metadata,
+			Content:  content,
+			ID:       fmt.Sprint(c.index + i),
+		}
+		results[i] = Result{
+			ID: fmt.Sprint(c.index + i),
+		}
+	}
+
+	if err := c.collection.AddDocuments(context.Background(), documents, runtime.NumCPU()); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
 func (c *ChromemDB) Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error {
 	return c.collection.Delete(context.Background(), where, whereDocuments, ids...)
 }

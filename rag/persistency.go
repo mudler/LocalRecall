@@ -197,6 +197,7 @@ func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 }
 
 func (db *PersistentKB) storeFile(entry string, metadata map[string]string) error {
+	xlog.Info("Storing file", "entry", entry)
 	fileName := filepath.Base(entry)
 
 	// copy file to assetDir (if it's a file)
@@ -217,6 +218,7 @@ func (db *PersistentKB) storeFile(entry string, metadata map[string]string) erro
 }
 
 func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string) error {
+	xlog.Info("Storing or replacing entry", "entry", entry)
 	db.Lock()
 	defer db.Unlock()
 
@@ -234,22 +236,23 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 }
 
 func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]engine.Result, error) {
+	xlog.Info("Storing files", "files", files)
 	results := []engine.Result{}
+
 	for _, c := range files {
 		e := filepath.Join(db.assetDir, filepath.Base(c))
 		pieces, err := chunkFile(e, db.maxChunkSize)
 		if err != nil {
 			return nil, err
 		}
-		for _, p := range pieces {
-			metadata["type"] = "file"
-			metadata["source"] = c
-			res, err := db.Engine.Store(p, metadata)
-			if err != nil {
-				return nil, err
-			}
-			results = append(results, res)
+		metadata["type"] = "file"
+		metadata["source"] = c
+		xlog.Info("Storing pieces", "pieces", pieces, "metadata", metadata)
+		res, err := db.Engine.StoreDocuments(pieces, metadata)
+		if err != nil {
+			return nil, err
 		}
+		results = append(results, res...)
 		db.index[c] = results
 	}
 
