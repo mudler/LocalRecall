@@ -8,6 +8,7 @@ import (
 
 	"github.com/mudler/localrecall/rag"
 	"github.com/mudler/localrecall/rag/engine"
+	"github.com/mudler/localrecall/rag/sources"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/sashabaranov/go-openai"
@@ -46,7 +47,9 @@ var _ = Describe("SourceManager", func() {
 		Expect(err).To(BeNil())
 
 		// Create source manager
-		sourceManager = rag.NewSourceManager()
+		sourceManager = rag.NewSourceManager(&sources.Config{
+			GitPrivateKey: os.Getenv("GIT_PRIVATE_KEY"),
+		})
 	})
 
 	AfterEach(func() {
@@ -276,6 +279,35 @@ var _ = Describe("SourceManager", func() {
 				}
 				return true
 			}, 2*time.Minute, 5*time.Second).Should(BeTrue())
+		})
+	})
+
+	Context("Git Repository Handling", func() {
+		BeforeEach(func() {
+			sourceManager.RegisterCollection(TestCollection, kb)
+		})
+
+		It("should fetch and index content from a public Git repository", func() {
+			// Add a public repository with a short update interval
+			err := sourceManager.AddSource(TestCollection, "https://github.com/mahseema/awesome-ai-tools", 2*time.Second)
+			Expect(err).To(BeNil())
+
+			// Start the background service
+			sourceManager.Start()
+
+			// Wait for the content to be fetched and indexed
+			Eventually(func() []string {
+				return kb.ListDocuments()
+			}, TestTimeout, TestPollingInterval).Should(Not(BeEmpty()))
+
+			// Search for content we expect to find in the repository
+			Eventually(func() bool {
+				results, err := kb.Engine.Search("bulk calling", 1)
+				if err != nil {
+					return false
+				}
+				return len(results) > 0
+			}, TestTimeout, TestPollingInterval).Should(BeTrue())
 		})
 	})
 })
