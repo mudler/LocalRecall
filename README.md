@@ -141,6 +141,7 @@ LocalRecall uses environment variables to configure its behavior. These variable
 | `VECTOR_ENGINE`      | Vector database engine to use (`chromem` by default; support for others like Milvus and Qdrant planned).        |
 | `MAX_CHUNKING_SIZE`  | Maximum size (in characters) for breaking down documents into chunks. Affects performance and accuracy.         |
 | `API_KEYS`           | Comma-separated list of API keys for securing access to the REST API (optional).                                |
+| `GIT_PRIVATE_KEY`    | Base64-encoded SSH private key for accessing private Git repositories (optional).                                |
 
 These variables can be passed directly when running the binary or inside your Docker container for easy configuration.
 
@@ -212,6 +213,17 @@ curl -X POST $BASE_URL/collections/myCollection/sources \
 ```
 
 The `update_interval` is specified in minutes. If not provided, it defaults to 60 minutes.
+
+External sources support various URL types:
+- Web pages (https://example.com)
+- Git repositories (https://github.com/user/repo.git or git@github.com:user/repo.git)
+- Sitemaps (https://example.com/sitemap.xml)
+
+For private Git repositories, set the `GIT_PRIVATE_KEY` environment variable with a base64-encoded SSH private key:
+```sh
+# Encode your private key
+export GIT_PRIVATE_KEY=$(cat /path/to/private_key | base64 -w 0)
+```
 
 - **Remove External Source**:
 
