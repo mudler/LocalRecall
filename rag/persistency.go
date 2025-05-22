@@ -19,7 +19,7 @@ import (
 
 // CollectionState represents the persistent state of a collection
 type CollectionState struct {
-	ExternalSources []ExternalSource           `json:"external_sources"`
+	ExternalSources []*ExternalSource          `json:"external_sources"`
 	Index           map[string][]engine.Result `json:"index"`
 }
 
@@ -29,7 +29,7 @@ type PersistentKB struct {
 	path         string
 	assetDir     string
 	maxChunkSize int
-	sources      []ExternalSource
+	sources      []*ExternalSource
 
 	index map[string][]engine.Result
 }
@@ -48,7 +48,7 @@ func loadDB(path string) (*CollectionState, error) {
 		if err := json.Unmarshal(data, &legacyFiles); err != nil {
 			return nil, err
 		}
-		state.ExternalSources = []ExternalSource{}
+		state.ExternalSources = []*ExternalSource{}
 		state.Index = map[string][]engine.Result{}
 	}
 
@@ -68,7 +68,7 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 			Engine:       store,
 			assetDir:     assetDir,
 			maxChunkSize: maxChunkSize,
-			sources:      []ExternalSource{},
+			sources:      []*ExternalSource{},
 			index:        map[string][]engine.Result{},
 		}
 		persistentKB.Lock()
@@ -104,7 +104,7 @@ func (db *PersistentKB) Reset() error {
 	for f := range db.index {
 		os.Remove(filepath.Join(db.assetDir, f))
 	}
-	db.sources = []ExternalSource{}
+	db.sources = []*ExternalSource{}
 	db.index = map[string][]engine.Result{}
 	db.save()
 	db.Unlock()
@@ -368,14 +368,14 @@ func chunkFile(fpath string, maxchunksize int) ([]string, error) {
 }
 
 // GetExternalSources returns the list of external sources for this collection
-func (db *PersistentKB) GetExternalSources() []ExternalSource {
+func (db *PersistentKB) GetExternalSources() []*ExternalSource {
 	db.Lock()
 	defer db.Unlock()
 	return db.sources
 }
 
 // AddExternalSource adds an external source to the collection
-func (db *PersistentKB) AddExternalSource(source ExternalSource) error {
+func (db *PersistentKB) AddExternalSource(source *ExternalSource) error {
 	db.Lock()
 	defer db.Unlock()
 

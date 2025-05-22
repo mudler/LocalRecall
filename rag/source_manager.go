@@ -22,8 +22,8 @@ type ExternalSource struct {
 
 // SourceManager manages external sources for collections
 type SourceManager struct {
-	sources     map[string][]ExternalSource // collection name -> sources
-	collections map[string]*PersistentKB    // collection name -> collection
+	sources     map[string][]*ExternalSource // collection name -> sources
+	collections map[string]*PersistentKB     // collection name -> collection
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -33,7 +33,7 @@ type SourceManager struct {
 func NewSourceManager() *SourceManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SourceManager{
-		sources:     make(map[string][]ExternalSource),
+		sources:     make(map[string][]*ExternalSource),
 		collections: make(map[string]*PersistentKB),
 		ctx:         ctx,
 		cancel:      cancel,
@@ -72,14 +72,14 @@ func (sm *SourceManager) AddSource(collectionName, url string, updateInterval ti
 	}
 
 	// Add the source to the collection's persistent storage
-	if err := collection.AddExternalSource(source); err != nil {
+	if err := collection.AddExternalSource(&source); err != nil {
 		return err
 	}
 
-	sm.sources[collectionName] = append(sm.sources[collectionName], source)
+	sm.sources[collectionName] = append(sm.sources[collectionName], &source)
 
 	// Trigger an immediate update
-	go sm.updateSource(collectionName, source, collection)
+	go sm.updateSource(collectionName, &source, collection)
 
 	return nil
 }
@@ -116,7 +116,10 @@ func (sm *SourceManager) RemoveSource(collectionName, url string) error {
 }
 
 // updateSource updates a single source
-func (sm *SourceManager) updateSource(collectionName string, source ExternalSource, collection *PersistentKB) {
+func (sm *SourceManager) updateSource(collectionName string, source *ExternalSource, collection *PersistentKB) {
+
+	// update LastUpdate
+	source.LastUpdate = time.Now()
 
 	xlog.Info("Updating source", "url", source.URL)
 	content, err := sources.SourceRouter(source.URL)

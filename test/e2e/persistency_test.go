@@ -123,7 +123,7 @@ var _ = Describe("Persistency", func() {
 				LastUpdate:     time.Now(),
 			}
 
-			err := kb.AddExternalSource(source)
+			err := kb.AddExternalSource(&source)
 			Expect(err).To(BeNil())
 
 			sources := kb.GetExternalSources()
@@ -144,10 +144,10 @@ var _ = Describe("Persistency", func() {
 				LastUpdate:     time.Now(),
 			}
 
-			err := kb.AddExternalSource(source)
+			err := kb.AddExternalSource(&source)
 			Expect(err).To(BeNil())
 
-			err = kb.AddExternalSource(source)
+			err = kb.AddExternalSource(&source)
 			Expect(err).ToNot(BeNil())
 		})
 	})

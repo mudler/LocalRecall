@@ -76,7 +76,7 @@ var _ = Describe("SourceManager", func() {
 				UpdateInterval: DefaultUpdateInterval,
 				LastUpdate:     time.Now(),
 			}
-			err := kb.AddExternalSource(source)
+			err := kb.AddExternalSource(&source)
 			Expect(err).To(BeNil())
 
 			// Register the collection
@@ -142,7 +142,7 @@ var _ = Describe("SourceManager", func() {
 			sourceManager.Start()
 
 			// Wait for at least one update cycle and verify the source was updated
-			Eventually(func() []rag.ExternalSource {
+			Eventually(func() []*rag.ExternalSource {
 				return kb.GetExternalSources()
 			}, TestTimeout, TestPollingInterval).Should(HaveLen(1))
 
