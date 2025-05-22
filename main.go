@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/mudler/localrecall/rag"
+	"github.com/mudler/localrecall/rag/sources"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -21,7 +22,10 @@ var (
 	vectorEngine     = os.Getenv("VECTOR_ENGINE")
 	maxChunkingSize  = os.Getenv("MAX_CHUNKING_SIZE")
 	apiKeys          = os.Getenv("API_KEYS")
-	sourceManager    = rag.NewSourceManager()
+	gitPrivateKey    = os.Getenv("GIT_PRIVATE_KEY")
+	sourceManager    = rag.NewSourceManager(&sources.Config{
+		GitPrivateKey: gitPrivateKey,
+	})
 )
 
 func init() {

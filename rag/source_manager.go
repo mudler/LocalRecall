@@ -27,16 +27,18 @@ type SourceManager struct {
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
+	config      *sources.Config
 }
 
 // NewSourceManager creates a new source manager
-func NewSourceManager() *SourceManager {
+func NewSourceManager(config *sources.Config) *SourceManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SourceManager{
 		sources:     make(map[string][]*ExternalSource),
 		collections: make(map[string]*PersistentKB),
 		ctx:         ctx,
 		cancel:      cancel,
+		config:      config,
 	}
 }
 
@@ -122,7 +124,7 @@ func (sm *SourceManager) updateSource(collectionName string, source *ExternalSou
 	source.LastUpdate = time.Now()
 
 	xlog.Info("Updating source", "url", source.URL)
-	content, err := sources.SourceRouter(source.URL)
+	content, err := sources.SourceRouter(source.URL, sm.config)
 	if err != nil {
 		xlog.Error("Error updating source", err)
 		return
