@@ -125,7 +125,7 @@ func (sm *SourceManager) updateSource(collectionName string, source ExternalSour
 		return
 	}
 
-	xlog.Info("Content", "content", content)
+	//xlog.Info("Content", "content", content)
 
 	// Create a temporary file to store the content
 	sanitizedURL := sanitizeURL(source.URL)

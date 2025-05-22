@@ -31,6 +31,18 @@ func (db *LocalAIRAGDB) Count() int {
 	return 0
 }
 
+func (db *LocalAIRAGDB) StoreDocuments(s []string, metadata map[string]string) ([]Result, error) {
+	results := []Result{}
+	for _, content := range s {
+		result, err := db.Store(content, metadata)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 func (db *LocalAIRAGDB) Store(s string, metadata map[string]string) (Result, error) {
 	resp, err := db.openaiClient.CreateEmbeddings(context.TODO(),
 		openai.EmbeddingRequestStrings{
