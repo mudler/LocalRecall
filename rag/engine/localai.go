@@ -31,6 +31,10 @@ func (db *LocalAIRAGDB) Count() int {
 	return 0
 }
 
+func (db *LocalAIRAGDB) GetEmbeddingDimensions() (int, error) {
+	return 0, fmt.Errorf("not implemented")
+}
+
 func (db *LocalAIRAGDB) StoreDocuments(s []string, metadata map[string]string) ([]Result, error) {
 	results := []Result{}
 	for _, content := range s {

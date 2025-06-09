@@ -2,6 +2,7 @@ package rag
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/engine"
 	"github.com/mudler/localrecall/rag/types"
+	"github.com/sashabaranov/go-openai"
 )
 
 // CollectionState represents the persistent state of a collection
@@ -55,7 +57,7 @@ func loadDB(path string) (*CollectionState, error) {
 	return state, nil
 }
 
-func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize int) (*PersistentKB, error) {
+func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize int, llmClient *openai.Client, embeddingModel string) (*PersistentKB, error) {
 	// if file exists, try to load an existing state
 	// if file does not exist, create a new state
 	if err := os.MkdirAll(assetDir, 0755); err != nil {
@@ -87,6 +89,24 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 		assetDir:     assetDir,
 		sources:      state.ExternalSources,
 		index:        state.Index,
+	}
+
+	// TODO: Automatically repopulate if embeddings dimensions are mismatching.
+	// To check if dimensions are mismatching, we can check the number of dimensions of the first embedding in the index if is the same as the
+	// dimension that the embedding model returns.
+	resp, err := llmClient.CreateEmbeddings(context.Background(),
+		openai.EmbeddingRequestStrings{
+			Input: []string{"test"},
+			Model: openai.EmbeddingModel(embeddingModel),
+		},
+	)
+	if err == nil && len(resp.Data) > 0 {
+		embedding := resp.Data[0].Embedding
+		embeddingDimensions, err := db.Engine.GetEmbeddingDimensions()
+		if err == nil && len(embedding) != embeddingDimensions {
+			xlog.Info("Embedding dimensions mismatch, repopulating", "embeddingDimensions", embeddingDimensions, "embedding", embedding)
+			return db, db.Repopulate()
+		}
 	}
 
 	return db, nil
