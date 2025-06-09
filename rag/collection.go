@@ -26,7 +26,7 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
 		chromemDB,
-		maxChunkSize)
+		maxChunkSize, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
 		os.Exit(1)
@@ -44,7 +44,7 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
 		ragDB,
-		maxChunkSize)
+		maxChunkSize, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
 		os.Exit(1)

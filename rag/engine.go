@@ -8,6 +8,7 @@ import (
 type Engine interface {
 	Store(s string, metadata map[string]string) (engine.Result, error)
 	StoreDocuments(s []string, metadata map[string]string) ([]engine.Result, error)
+	GetEmbeddingDimensions() (int, error)
 	Reset() error
 	Search(s string, similarEntries int) ([]types.Result, error)
 	Count() int

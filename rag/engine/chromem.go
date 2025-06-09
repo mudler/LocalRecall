@@ -39,6 +39,11 @@ func NewChromemDBCollection(collection, path string, openaiClient *openai.Client
 	}
 	chromem.collection = c
 
+	count := c.Count()
+	if count > 0 {
+		chromem.index = count + 1
+	}
+
 	return chromem, nil
 }
 
@@ -57,6 +62,20 @@ func (c *ChromemDB) Reset() error {
 	c.collection = collection
 
 	return nil
+}
+
+func (c *ChromemDB) GetEmbeddingDimensions() (int, error) {
+	count := c.collection.Count()
+	if count == 0 {
+		return 0, fmt.Errorf("no documents in collection")
+	}
+
+	doc, err := c.collection.GetByID(context.Background(), fmt.Sprint(count))
+	if err != nil {
+		return 0, fmt.Errorf("error getting document: %v", err)
+	}
+
+	return len(doc.Embedding), nil
 }
 
 func (c *ChromemDB) embedding() chromem.EmbeddingFunc {

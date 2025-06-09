@@ -40,7 +40,7 @@ var _ = Describe("Persistency", func() {
 		Expect(err).To(BeNil())
 
 		// Create new PersistentKB
-		kb, err = rag.NewPersistentCollectionKB(stateFile, assetDir, chromemEngine, DefaultChunkSize)
+		kb, err = rag.NewPersistentCollectionKB(stateFile, assetDir, chromemEngine, DefaultChunkSize, localAI, EmbeddingModel)
 		Expect(err).To(BeNil())
 	})
 
