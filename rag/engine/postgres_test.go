@@ -7,21 +7,18 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/mudler/localrecall/rag/engine"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/sashabaranov/go-openai"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 var _ = Describe("PostgresDB", func() {
 	var (
-		postgresContainer *postgres.PostgresContainer
-		databaseURL       string
-		openaiClient      *openai.Client
-		collectionName    string
+		databaseURL    string
+		openaiClient   *openai.Client
+		collectionName string
 	)
 
 	BeforeEach(func() {
@@ -33,11 +30,26 @@ var _ = Describe("PostgresDB", func() {
 			localAIEndpoint = "http://localhost:8081"
 		}
 
-		// Try to connect to LocalAI
-		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Get(localAIEndpoint + "/health")
-		if err != nil || resp.StatusCode != http.StatusOK {
-			Skip("LocalAI is not available, skipping PostgreSQL tests")
+		// Try to connect to LocalAI - fail if not available
+		// Try multiple endpoints as LocalAI may expose different ones
+		client := &http.Client{Timeout: 5 * time.Second}
+		var resp *http.Response
+		var err error
+		endpoints := []string{"/health", "/ready", "/v1/models", "/"}
+		connected := false
+		for _, endpoint := range endpoints {
+			resp, err = client.Get(localAIEndpoint + endpoint)
+			if err == nil && resp != nil && resp.StatusCode < 500 {
+				resp.Body.Close()
+				connected = true
+				break
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+		if !connected {
+			Fail(fmt.Sprintf("LocalAI is not available at %s (tried: %v): %v", localAIEndpoint, endpoints, err))
 		}
 
 		// Create OpenAI client pointing to LocalAI
@@ -45,32 +57,24 @@ var _ = Describe("PostgresDB", func() {
 		config.BaseURL = localAIEndpoint
 		openaiClient = openai.NewClientWithConfig(config)
 
-		// Start PostgreSQL container with testcontainers
-		ctx := context.Background()
-		postgresContainer, err = postgres.RunContainer(ctx,
-			testcontainers.WithImage("timescale/timescaledb:latest-pg16"),
-			postgres.WithDatabase("testdb"),
-			postgres.WithUsername("testuser"),
-			postgres.WithPassword("testpass"),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(1).
-					WithStartupTimeout(30*time.Second)),
-		)
-		Expect(err).ToNot(HaveOccurred())
+		// Use PostgreSQL from docker-compose
+		// Connection string for docker-compose postgres service
+		databaseURL = "postgresql://localrecall:localrecall@localhost:5432/localrecall?sslmode=disable"
 
-		// Get connection string
-		connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+		// Verify PostgreSQL is accessible
+		ctx := context.Background()
+		pgConfig, err := pgxpool.ParseConfig(databaseURL)
 		Expect(err).ToNot(HaveOccurred())
-		databaseURL = connStr
+		testPool, err := pgxpool.NewWithConfig(ctx, pgConfig)
+		Expect(err).ToNot(HaveOccurred())
+		defer testPool.Close()
+
+		err = testPool.Ping(ctx)
+		Expect(err).ToNot(HaveOccurred(), "PostgreSQL from docker-compose is not accessible")
 	})
 
 	AfterEach(func() {
-		if postgresContainer != nil {
-			ctx := context.Background()
-			err := postgresContainer.Terminate(ctx)
-			Expect(err).ToNot(HaveOccurred())
-		}
+		// No cleanup needed - using docker-compose postgres
 	})
 
 	Describe("NewPostgresDBCollection", func() {

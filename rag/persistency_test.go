@@ -37,11 +37,25 @@ var _ = Describe("PersistentKB", func() {
 			localAIEndpoint = "http://localhost:8081"
 		}
 
-		// Try to connect to LocalAI
-		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Get(localAIEndpoint + "/health")
-		if err != nil || resp.StatusCode != http.StatusOK {
-			Skip("LocalAI is not available, skipping PersistentKB tests")
+		// Try to connect to LocalAI - fail if not available
+		// Try multiple endpoints as LocalAI may expose different ones
+		client := &http.Client{Timeout: 5 * time.Second}
+		var resp *http.Response
+		endpoints := []string{"/health", "/ready", "/v1/models", "/"}
+		connected := false
+		for _, endpoint := range endpoints {
+			resp, err = client.Get(localAIEndpoint + endpoint)
+			if err == nil && resp != nil && resp.StatusCode < 500 {
+				resp.Body.Close()
+				connected = true
+				break
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+		if !connected {
+			Fail(fmt.Sprintf("LocalAI is not available at %s (tried: %v): %v", localAIEndpoint, endpoints, err))
 		}
 
 		// Create OpenAI client pointing to LocalAI

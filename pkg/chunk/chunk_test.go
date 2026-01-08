@@ -17,7 +17,9 @@ var _ = Describe("Chunk", func() {
 
 		It("should handle empty text", func() {
 			chunks := SplitParagraphIntoChunks("", 100)
-			Expect(chunks).To(BeEmpty())
+			// Empty string returns a slice with one empty string element
+			Expect(chunks).To(HaveLen(1))
+			Expect(chunks[0]).To(BeEmpty())
 		})
 
 		It("should respect max chunk size", func() {

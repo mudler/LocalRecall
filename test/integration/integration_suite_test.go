@@ -1,7 +1,6 @@
 package integration_test
 
 import (
-	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -9,10 +8,7 @@ import (
 )
 
 func TestIntegration(t *testing.T) {
-	if os.Getenv("INTEGRATION") != "true" {
-		t.Skip("Skipping integration tests. Set INTEGRATION=true to run.")
-	}
-
+	// Integration tests always run - they require services to be available
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Integration test suite")
 }
