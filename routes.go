@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag"
+	"github.com/mudler/xlog"
 	"github.com/sashabaranov/go-openai"
 )
 

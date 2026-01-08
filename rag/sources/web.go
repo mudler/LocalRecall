@@ -4,7 +4,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/mudler/localrecall/pkg/xlog"
+	"github.com/mudler/xlog"
 	sitemap "github.com/oxffaa/gopher-parse-sitemap"
 	"jaytaylor.com/html2text"
 )

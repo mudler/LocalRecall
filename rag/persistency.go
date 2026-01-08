@@ -13,9 +13,9 @@ import (
 
 	"github.com/dslipak/pdf"
 	"github.com/mudler/localrecall/pkg/chunk"
-	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/engine"
 	"github.com/mudler/localrecall/rag/types"
+	"github.com/mudler/xlog"
 	"github.com/sashabaranov/go-openai"
 )
 

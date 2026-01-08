@@ -8,6 +8,7 @@ require (
 	github.com/dslipak/pdf v0.0.2
 	github.com/go-git/go-git/v5 v5.16.0
 	github.com/labstack/echo/v4 v4.13.3
+	github.com/mudler/xlog v0.0.5
 	github.com/onsi/ginkgo/v2 v2.22.2
 	github.com/onsi/gomega v1.36.2
 	github.com/oxffaa/gopher-parse-sitemap v0.0.0-20191021113419-005d2eb1def4

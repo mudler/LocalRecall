@@ -3,7 +3,7 @@ package sources
 import (
 	"strings"
 
-	"github.com/mudler/localrecall/pkg/xlog"
+	"github.com/mudler/xlog"
 )
 
 func SourceRouter(url string, config *Config) (string, error) {
