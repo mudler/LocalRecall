@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/sources"
+	"github.com/mudler/xlog"
 )
 
 // ExternalSource represents a source that needs to be periodically updated

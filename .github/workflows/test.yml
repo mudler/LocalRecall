@@ -8,44 +8,86 @@ on:
     branches:
       - '**'
 
-
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}-${{ github.repository }}
   cancel-in-progress: true
 
-
 jobs:
-  test:
+  unit-tests:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@v4
       with:
         go-version: '^1.22'
 
     - name: Install dependencies
       run: go mod tidy
-    - name: Run tests
+
+    - name: Run unit tests
+      run: make test-unit
+
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      localai:
+        image: quay.io/go-skynet/local-ai:latest
+        ports:
+          - 8081:8080
+        options: >-
+          --health-cmd "curl -f http://localhost:8080/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '^1.22'
+
+    - name: Install dependencies
+      run: go mod tidy
+
+    - name: Wait for LocalAI
       run: |
-        make test
-  e2e:
-      runs-on: ubuntu-latest
-  
-      steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-  
-      - name: Set up Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: '^1.22'
-  
-      - name: Install dependencies
-        run: go mod tidy
-      - name: Run tests
-        run: |
-          make test-e2e
+        timeout 60 bash -c 'until curl -f http://localhost:8081/health; do sleep 2; done'
+
+    - name: Run integration tests
+      env:
+        INTEGRATION: "true"
+        LOCALAI_ENDPOINT: "http://localhost:8081"
+      run: make test-integration
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '^1.22'
+
+    - name: Install dependencies
+      run: go mod tidy
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Run E2E tests
+      env:
+        E2E: "true"
+        LOCALAI_ENDPOINT: "http://localhost:8081"
+        LOCALRECALL_ENDPOINT: "http://localhost:8080"
+      run: make test-e2e

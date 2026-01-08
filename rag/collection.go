@@ -57,6 +57,27 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 	return persistentKB
 }
 
+// NewPersistentPostgresCollection creates a new persistent knowledge base collection using the PostgreSQL engine
+func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize int, databaseURL string) *PersistentKB {
+	postgresDB, err := engine.NewPostgresDBCollection(collectionName, databaseURL, llmClient, embeddingModel)
+	if err != nil {
+		xlog.Error("Failed to create PostgresDB", err)
+		os.Exit(1)
+	}
+
+	persistentKB, err := NewPersistentCollectionKB(
+		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
+		filePath,
+		postgresDB,
+		maxChunkSize, llmClient, embeddingModel)
+	if err != nil {
+		xlog.Error("Failed to create PersistentKB", err)
+		os.Exit(1)
+	}
+
+	return persistentKB
+}
+
 // ListAllCollections lists all collections in the database
 func ListAllCollections(dbPath string) []string {
 	files, err := os.ReadDir(dbPath)
