@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mudler/localrecall/pkg/xlog"
 	"github.com/mudler/localrecall/rag/sources"
+	"github.com/mudler/xlog"
 )
 
 // ExternalSource represents a source that needs to be periodically updated
@@ -130,25 +130,42 @@ func (sm *SourceManager) updateSource(collectionName string, source *ExternalSou
 		return
 	}
 
-	//xlog.Info("Content", "content", content)
+	xlog.Info("Fetched content", "url", source.URL, "content_length", len(content))
+	if len(content) == 0 {
+		xlog.Warn("Empty content fetched from source", "url", source.URL)
+		return
+	}
 
 	// Create a temporary file to store the content
+	// Use a consistent filename based on URL so StoreOrReplace can find existing entries
+	// But use a unique temp directory to avoid race conditions
 	sanitizedURL := sanitizeURL(source.URL)
-	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("source-%s-%s.txt", collectionName, sanitizedURL))
+	fileName := fmt.Sprintf("source-%s-%s.txt", collectionName, sanitizedURL)
+
+	// Create a unique temp directory for this update to avoid race conditions
+	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("source-update-%d", time.Now().UnixNano()))
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		xlog.Error("Error creating temp directory", "error", err)
+		return
+	}
+	defer os.RemoveAll(tmpDir) // Clean up temp directory
+
+	tmpFile := filepath.Join(tmpDir, fileName)
 	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
 		xlog.Error("Error creating temporary file", "error", err)
 		return
 	}
-	defer os.Remove(tmpFile)
 
-	xlog.Info("Storing content in collection", "tmpFile", tmpFile)
+	xlog.Info("Storing content in collection", "tmpFile", tmpFile, "fileName", fileName, "content_length", len(content))
 
 	// Store the content in the collection
+	// StoreOrReplace will use filepath.Base to get fileName, which matches our consistent naming
 	if err := collection.StoreOrReplace(tmpFile, map[string]string{"url": source.URL}); err != nil {
 		xlog.Error("Error storing content in collection", "error", err)
+		return
 	}
 
-	xlog.Info("Content stored in collection", "tmpFile", tmpFile)
+	xlog.Info("Content stored in collection", "tmpFile", tmpFile, "fileName", fileName)
 }
 
 // sanitizeURL converts a URL into a filesystem-safe string

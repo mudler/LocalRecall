@@ -221,18 +221,23 @@ func (db *PersistentKB) storeFile(entry string, metadata map[string]string) erro
 	fileName := filepath.Base(entry)
 
 	// copy file to assetDir (if it's a file)
-	if _, err := os.Stat(entry); err != nil {
+	fileInfo, err := os.Stat(entry)
+	if err != nil {
 		return fmt.Errorf("file does not exist: %s", entry)
 	}
+	xlog.Info("File info", "entry", entry, "size", fileInfo.Size())
 
 	if err := copyFile(entry, db.assetDir); err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
 
-	_, err := db.store(metadata, fileName)
+	beforeCount := db.Engine.Count()
+	results, err := db.store(metadata, fileName)
 	if err != nil {
 		return fmt.Errorf("failed to store file: %w", err)
 	}
+	afterCount := db.Engine.Count()
+	xlog.Info("Stored file", "entry", entry, "fileName", fileName, "results_count", len(results), "count_before", beforeCount, "count_after", afterCount, "added_count", afterCount-beforeCount)
 
 	return db.save()
 }
@@ -243,16 +248,57 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 	defer db.Unlock()
 
 	fileName := filepath.Base(entry)
-	_, ok := db.index[fileName]
-	// Check if we have it already in the index
-	if ok {
-		xlog.Info("Data already exists for entry", "entry", entry, "index", db.index)
-		if err := db.removeFileEntry(fileName); err != nil {
-			return fmt.Errorf("failed to remove entry: %w", err)
+	oldResults, hadExisting := db.index[fileName]
+
+	// Delete old chunks FIRST to avoid ID conflicts (PostgreSQL reuses IDs)
+	// This means Count() will briefly be 0, but it's the only reliable way
+	if hadExisting {
+		xlog.Info("Removing old chunks before storing new ones", "entry", fileName, "old_chunk_count", len(oldResults))
+
+		// Delete old chunks by their IDs before storing new ones
+		oldIDsToDelete := make([]string, 0, len(oldResults))
+		for _, oldResult := range oldResults {
+			oldIDsToDelete = append(oldIDsToDelete, oldResult.ID)
 		}
+
+		if len(oldIDsToDelete) > 0 {
+			beforeDeleteCount := db.Engine.Count()
+			if err := db.Engine.Delete(map[string]string{}, map[string]string{}, oldIDsToDelete...); err != nil {
+				xlog.Error("Failed to delete old chunks", "ids_count", len(oldIDsToDelete), "error", err)
+				return fmt.Errorf("failed to delete old chunks: %w", err)
+			}
+			afterDeleteCount := db.Engine.Count()
+			xlog.Info("Deleted old chunks", "entry", fileName, "deleted_count", len(oldIDsToDelete), "count_before", beforeDeleteCount, "count_after", afterDeleteCount)
+		}
+
+		// Clear the index entry for this file
+		delete(db.index, fileName)
 	}
 
-	return db.storeFile(entry, metadata)
+	// Now store the new chunks
+	// Copy file first
+	if _, err := os.Stat(entry); err != nil {
+		return fmt.Errorf("file does not exist: %s", entry)
+	}
+	if err := copyFile(entry, db.assetDir); err != nil {
+		return fmt.Errorf("failed to copy file: %w", err)
+	}
+
+	// Store the new chunks
+	beforeCount := db.Engine.Count()
+	results, err := db.store(metadata, fileName)
+	if err != nil {
+		return fmt.Errorf("failed to store file: %w", err)
+	}
+	afterStoreCount := db.Engine.Count()
+	xlog.Info("Stored new chunks", "entry", fileName, "new_chunk_count", len(results), "count_before", beforeCount, "count_after", afterStoreCount)
+
+	// Save the index
+	if err := db.save(); err != nil {
+		return fmt.Errorf("failed to save index: %w", err)
+	}
+
+	return nil
 }
 
 func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]engine.Result, error) {
@@ -267,10 +313,16 @@ func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]en
 		}
 		metadata["type"] = "file"
 		metadata["source"] = c
-		xlog.Info("Storing pieces", "pieces", pieces, "metadata", metadata)
+		xlog.Info("Storing pieces", "pieces", len(pieces), "chunk_count", len(pieces), "file", c, "metadata", metadata)
+		if len(pieces) == 0 {
+			return nil, fmt.Errorf("no chunks generated for file: %s", c)
+		}
 		res, err := db.Engine.StoreDocuments(pieces, metadata)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to store documents: %w", err)
+		}
+		if len(res) != len(pieces) {
+			return nil, fmt.Errorf("stored %d chunks but expected %d for file: %s", len(res), len(pieces), c)
 		}
 		results = append(results, res...)
 		db.index[c] = results
@@ -291,14 +343,13 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 	xlog.Info("Removing entry", "entry", entry)
 	if os.Getenv("LOCALRECALL_REPOPULATE_DELETE") != "true" {
 		e := filepath.Join(db.assetDir, entry)
-		// results := db.index[filepath.Join(db.assetDir, entry)]
 
-		// for _, r := range results {
-		// 	db.Engine.Delete(r.ID)
-		// }
+		// Get count before deletion for logging
+		beforeCount := db.Engine.Count()
+		xlog.Info("Deleting entry from engine", "entry", entry, "chunks_in_index", len(db.index[entry]), "total_count_before", beforeCount)
 
-		xlog.Info("Deleting entry from engine", "entry", entry)
 		if err := db.Engine.Delete(map[string]string{"source": entry}, map[string]string{}); err != nil {
+			xlog.Error("Error deleting by source metadata", "error", err, "entry", entry)
 			return err
 		}
 
@@ -306,14 +357,17 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 		for _, id := range db.index[entry] {
 			res, err := db.Engine.GetByID(id.ID)
 			if err == nil {
-				xlog.Info("Result", "result", res)
-				xlog.Info("Deleting result from engine", "result", res)
+				xlog.Debug("Found remaining result", "result", res)
 				err := db.Engine.Delete(map[string]string{}, map[string]string{}, res.ID)
 				if err != nil {
+					xlog.Error("Error deleting by ID", "error", err, "id", res.ID)
 					return err
 				}
 			}
 		}
+
+		afterCount := db.Engine.Count()
+		xlog.Info("Deleted entry", "entry", entry, "count_before", beforeCount, "count_after", afterCount, "deleted_count", beforeCount-afterCount)
 
 		xlog.Info("Deleting entry from index", "entry", entry)
 		delete(db.index, entry)
@@ -335,11 +389,22 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 }
 
 func copyFile(src, dst string) error {
+	// Ensure destination directory exists
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
+
 	in, err := os.ReadFile(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read source file: %w", err)
 	}
-	return os.WriteFile(filepath.Join(dst, filepath.Base(src)), in, 0644)
+
+	dstPath := filepath.Join(dst, filepath.Base(src))
+	if err := os.WriteFile(dstPath, in, 0644); err != nil {
+		return fmt.Errorf("failed to write destination file: %w", err)
+	}
+
+	return nil
 }
 
 func chunkFile(fpath string, maxchunksize int) ([]string, error) {
@@ -378,7 +443,16 @@ func chunkFile(fpath string, maxchunksize int) ([]string, error) {
 			xlog.Error("Error reading file: ", fpath)
 			return nil, err
 		}
-		return chunk.SplitParagraphIntoChunks(string(content), maxchunksize), nil
+		contentStr := string(content)
+		chunks := chunk.SplitParagraphIntoChunks(contentStr, maxchunksize)
+		xlog.Info("Chunked file", "file", fpath, "content_length", len(contentStr), "max_chunk_size", maxchunksize, "chunk_count", len(chunks))
+		if len(chunks) > 0 {
+			xlog.Debug("First chunk length", "length", len(chunks[0]))
+			if len(chunks) > 1 {
+				xlog.Debug("Last chunk length", "length", len(chunks[len(chunks)-1]))
+			}
+		}
+		return chunks, nil
 
 	default:
 		xlog.Error("Unsupported file type: ", extension)

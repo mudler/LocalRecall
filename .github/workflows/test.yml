@@ -8,44 +8,68 @@ on:
     branches:
       - '**'
 
-
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}-${{ github.repository }}
   cancel-in-progress: true
 
-
 jobs:
-  test:
+  unit-tests:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@v4
       with:
         go-version: '^1.22'
 
     - name: Install dependencies
       run: go mod tidy
-    - name: Run tests
-      run: |
-        make test
-  e2e:
+
+    - name: Run unit tests
+      run: make test-unit
+
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '^1.22'
+
+    - name: Install dependencies
+      run: go mod tidy
+
+    - name: Run integration tests
+      env:
+        INTEGRATION: "true"
+      run: make test-integration
+
+  e2e-tests:
       runs-on: ubuntu-latest
   
       steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
   
       - name: Set up Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v4
         with:
           go-version: '^1.22'
   
       - name: Install dependencies
         run: go mod tidy
-      - name: Run tests
-        run: |
-          make test-e2e
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run E2E tests
+        env:
+          E2E: "true"
+        run: make test-e2e

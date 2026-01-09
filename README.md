@@ -15,7 +15,11 @@
 
 A lightweight, no-frills RESTful API designed for managing knowledge bases and files stored in vector databases—**no GPU, internet, or cloud services required**! LocalRecall provides a simple and generic abstraction layer to handle knowledge retrieval, ideal for AI agents and chatbots to manage both long-term and short-term memory seamlessly.
 
-Currently, LocalRecall is batteries included and supports a local vector store powered by **Chromem**, with plans to add additional vector stores such as **Milvus** and **Qdrant**. It can easily integrate with LocalAI, LocalAGI, and other agent frameworks, offering an intuitive web UI for convenient file management, including support for raw text inputs.
+Currently, LocalRecall is batteries included and supports multiple vector database engines:
+- **Chromem**: Local file-based vector store (default)
+- **PostgreSQL**: Production-ready PostgreSQL with TimescaleDB, pgvector, and pgvectorscale for hybrid search (BM25 + vector similarity)
+
+It can easily integrate with LocalAI, LocalAGI, and other agent frameworks, offering an intuitive web UI for convenient file management, including support for raw text inputs.
 
 ## 📚🆕 Local Stack Family
 
@@ -96,6 +100,8 @@ Your web UI will be available at `http://localhost:8080`.
 
 ## 🐳 Docker Deployment
 
+### Using Chromem (Default)
+
 Build and run using Docker:
 
 ```sh
@@ -118,11 +124,66 @@ docker run -ti -v $PWD/state:/state \
                -p 8080:8080 quay.io/mudler/localrecall
 ```
 
-or with Docker compose
+### Using PostgreSQL (Recommended for Production)
+
+For production deployments, PostgreSQL provides better performance, scalability, and hybrid search capabilities (combining BM25 keyword search with vector similarity search).
+
+#### Quick Start with Docker Compose
+
+The easiest way to get started with PostgreSQL is using Docker Compose:
 
 ```sh
 docker compose up -d
 ```
+
+This will start:
+- **LocalAI**: For embeddings (port 8081)
+- **PostgreSQL**: With TimescaleDB, pgvector, and pgvectorscale extensions (port 5432)
+- **LocalRecall**: RAG server configured to use PostgreSQL (port 8080)
+
+#### Manual Setup
+
+1. **Start PostgreSQL** (using the pre-built image):
+
+```sh
+docker run -d \
+  --name localrecall-postgres \
+  -e POSTGRES_DB=localrecall \
+  -e POSTGRES_USER=localrecall \
+  -e POSTGRES_PASSWORD=localrecall \
+  -p 5432:5432 \
+  -v postgres_data:/var/lib/postgresql/data \
+  quay.io/mudler/localrecall:latest-postgresql
+```
+
+2. **Start LocalRecall** with PostgreSQL:
+
+```sh
+docker run -ti \
+  -e DATABASE_URL=postgresql://localrecall:localrecall@localhost:5432/localrecall?sslmode=disable \
+  -e VECTOR_ENGINE=postgres \
+  -e EMBEDDING_MODEL=granite-embedding-107m-multilingual \
+  -e FILE_ASSETS=/assets \
+  -e OPENAI_API_KEY=sk-1234567890 \
+  -e OPENAI_BASE_URL=http://localai:8080 \
+  -e HYBRID_SEARCH_BM25_WEIGHT=0.5 \
+  -e HYBRID_SEARCH_VECTOR_WEIGHT=0.5 \
+  -p 8080:8080 \
+  quay.io/mudler/localrecall
+```
+
+#### PostgreSQL Features
+
+- **Hybrid Search**: Combines BM25 (keyword) and vector (semantic) search with configurable weights
+- **Advanced Indexing**: 
+  - GIN indexes for full-text search
+  - BM25 indexes for keyword search
+  - DiskANN/HNSW indexes for vector similarity search
+- **Extensions Included**:
+  - `pg_textsearch`: BM25 keyword search
+  - `vectorscale`: Advanced vector search with DiskANN
+  - `pgvector`: Vector similarity search (fallback)
+  - `timescaledb`: Time-series capabilities
 
 ---
 
@@ -130,18 +191,21 @@ docker compose up -d
 
 LocalRecall uses environment variables to configure its behavior. These variables allow you to customize paths, models, and integration settings without modifying the code.
 
-| Variable             | Description                                                                                                     |
-| -------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `COLLECTION_DB_PATH` | Path to the vector database directory where collections are stored.                                             |
-| `EMBEDDING_MODEL`    | Name of the embedding model used for vectorization (e.g., `granite-embedding-107m-multilingual`).               |
-| `FILE_ASSETS`        | Directory path to store and retrieve uploaded file assets.                                                      |
-| `OPENAI_API_KEY`     | API key for embedding services (such as LocalAI or OpenAI-compatible APIs).                                     |
-| `OPENAI_BASE_URL`    | Base URL for the embedding model API (commonly `http://localai:8080`).                                          |
-| `LISTENING_ADDRESS`  | Address the server listens on (default: `:8080`). Useful for deployments on custom ports or network interfaces. |
-| `VECTOR_ENGINE`      | Vector database engine to use (`chromem` by default; support for others like Milvus and Qdrant planned).        |
-| `MAX_CHUNKING_SIZE`  | Maximum size (in characters) for breaking down documents into chunks. Affects performance and accuracy.         |
-| `API_KEYS`           | Comma-separated list of API keys for securing access to the REST API (optional).                                |
-| `GIT_PRIVATE_KEY`    | Base64-encoded SSH private key for accessing private Git repositories (optional).                                |
+| Variable                    | Description                                                                                                     |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `COLLECTION_DB_PATH`        | Path to the vector database directory where collections are stored (for Chromem engine).                        |
+| `DATABASE_URL`              | PostgreSQL connection string (required for PostgreSQL engine). Format: `postgresql://user:pass@host:port/db?sslmode=disable` |
+| `EMBEDDING_MODEL`           | Name of the embedding model used for vectorization (e.g., `granite-embedding-107m-multilingual`).               |
+| `FILE_ASSETS`               | Directory path to store and retrieve uploaded file assets.                                                      |
+| `OPENAI_API_KEY`            | API key for embedding services (such as LocalAI or OpenAI-compatible APIs).                                     |
+| `OPENAI_BASE_URL`           | Base URL for the embedding model API (commonly `http://localai:8080`).                                          |
+| `LISTENING_ADDRESS`         | Address the server listens on (default: `:8080`). Useful for deployments on custom ports or network interfaces. |
+| `VECTOR_ENGINE`             | Vector database engine to use (`chromem` by default, `postgres` for PostgreSQL).                              |
+| `MAX_CHUNKING_SIZE`         | Maximum size (in characters) for breaking down documents into chunks. Affects performance and accuracy.       |
+| `HYBRID_SEARCH_BM25_WEIGHT` | Weight for BM25 keyword search in hybrid search (default: 0.5, PostgreSQL only).                                 |
+| `HYBRID_SEARCH_VECTOR_WEIGHT` | Weight for vector similarity search in hybrid search (default: 0.5, PostgreSQL only).                           |
+| `API_KEYS`                  | Comma-separated list of API keys for securing access to the REST API (optional).                                |
+| `GIT_PRIVATE_KEY`           | Base64-encoded SSH private key for accessing private Git repositories (optional).                                |
 
 These variables can be passed directly when running the binary or inside your Docker container for easy configuration.
 
