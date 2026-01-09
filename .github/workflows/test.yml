@@ -34,18 +34,6 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest
 
-    services:
-      localai:
-        image: quay.io/go-skynet/local-ai:latest
-        ports:
-          - 8081:8080
-        options: >-
-          --health-cmd "wget --quiet --tries=1 --spider http://localhost:8080/health || wget --quiet --tries=1 --spider http://localhost:8080/ || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 60s
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -57,38 +45,31 @@ jobs:
 
     - name: Install dependencies
       run: go mod tidy
-
-    - name: Wait for LocalAI
-      run: |
-        timeout 60 bash -c 'until curl -f http://localhost:8081/health; do sleep 2; done'
 
     - name: Run integration tests
       env:
         INTEGRATION: "true"
-        LOCALAI_ENDPOINT: "http://localhost:8081"
       run: make test-integration
 
   e2e-tests:
-    runs-on: ubuntu-latest
+      runs-on: ubuntu-latest
+  
+      steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+  
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '^1.22'
+  
+      - name: Install dependencies
+        run: go mod tidy
 
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '^1.22'
-
-    - name: Install dependencies
-      run: go mod tidy
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Run E2E tests
-      env:
-        E2E: "true"
-        LOCALAI_ENDPOINT: "http://localhost:8081"
-        LOCALRECALL_ENDPOINT: "http://localhost:8080"
-      run: make test-e2e
+      - name: Run E2E tests
+        env:
+          E2E: "true"
+        run: make test-e2e
