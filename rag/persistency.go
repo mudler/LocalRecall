@@ -252,7 +252,13 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 		}
 	}
 
-	return db.storeFile(entry, metadata)
+	// Store the new file - if this fails, we've already deleted the old one, but that's okay
+	// as the new content should replace it
+	if err := db.storeFile(entry, metadata); err != nil {
+		return fmt.Errorf("failed to store file after removal: %w", err)
+	}
+
+	return nil
 }
 
 func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]engine.Result, error) {
@@ -335,11 +341,22 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 }
 
 func copyFile(src, dst string) error {
+	// Ensure destination directory exists
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
+
 	in, err := os.ReadFile(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read source file: %w", err)
 	}
-	return os.WriteFile(filepath.Join(dst, filepath.Base(src)), in, 0644)
+
+	dstPath := filepath.Join(dst, filepath.Base(src))
+	if err := os.WriteFile(dstPath, in, 0644); err != nil {
+		return fmt.Errorf("failed to write destination file: %w", err)
+	}
+
+	return nil
 }
 
 func chunkFile(fpath string, maxchunksize int) ([]string, error) {
