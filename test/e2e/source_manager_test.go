@@ -86,7 +86,7 @@ var _ = Describe("SourceManager", func() {
 			sourceManager.RegisterCollection(TestCollection, kb)
 
 			// Verify the source was loaded
-			err = sourceManager.AddSource(TestCollection, "https://another-example.com", DefaultUpdateInterval)
+			err = sourceManager.AddSource(TestCollection, "https://google.com", DefaultUpdateInterval)
 			Expect(err).To(BeNil())
 
 			sources := kb.GetExternalSources()
