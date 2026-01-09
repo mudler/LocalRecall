@@ -50,7 +50,7 @@ var _ = Describe("ChromemDB", func() {
 			}
 		}
 		if !connected {
-			Fail(fmt.Sprintf("LocalAI is not available at %s (tried: %v): %v", localAIEndpoint, endpoints, err))
+			Skip(fmt.Sprintf("LocalAI is not available at %s (tried: %v): %v", localAIEndpoint, endpoints, err))
 		}
 
 		// Create OpenAI client pointing to LocalAI
