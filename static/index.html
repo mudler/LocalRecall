@@ -6,9 +6,8 @@
   <title>LocalRecall</title>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <!-- Fixed Tailwind CDN link -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -17,86 +16,438 @@
           colors: {
             gray: {
               650: '#2D3748',
+            },
+            primary: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              200: '#bae6fd',
+              300: '#7dd3fc',
+              400: '#38bdf8',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+              800: '#075985',
+              900: '#0c4a6e',
             }
           }
         }
       }
     }
   </script>
+  <style>
+    .page-transition {
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 min-h-full transition-colors duration-200 font-sans leading-normal tracking-normal">
-  <div class="min-h-full" x-data="collectionManager()">
-    <!-- Navigation bar -->
-    <nav class="bg-white dark:bg-gray-800 shadow-md">
-      <div class="container mx-auto px-4 py-3 flex items-center justify-between">
-        <div class="flex items-center space-x-2">
-          <i class="fas fa-layer-group text-indigo-600 dark:text-indigo-400 text-2xl"></i>
-          <h1 class="text-2xl font-bold">LocalRecall</h1>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-full transition-colors duration-200 font-sans antialiased">
+  <div class="min-h-screen flex flex-col" x-data="appRouter()" x-init="init()">
+    <!-- Navigation Bar -->
+    <nav class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm sticky top-0 z-50">
+      <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex items-center justify-between h-16">
+          <!-- Logo and Brand -->
+          <div class="flex items-center space-x-3">
+            <div class="flex-shrink-0">
+              <i class="fas fa-brain text-2xl text-primary-600 dark:text-primary-400"></i>
+            </div>
+            <h1 class="text-xl font-bold text-gray-900 dark:text-white">LocalRecall</h1>
+          </div>
+
+          <!-- Desktop Navigation -->
+          <div class="hidden md:flex items-center space-x-1">
+            <button 
+              @click="navigate('search')" 
+              :class="currentPage === 'search' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'"
+              class="px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2"
+            >
+              <i class="fas fa-search text-sm"></i>
+              <span>Search</span>
+            </button>
+            <button 
+              @click="navigate('collections')" 
+              :class="currentPage === 'collections' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'"
+              class="px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2"
+            >
+              <i class="fas fa-folder text-sm"></i>
+              <span>Collections</span>
+            </button>
+            <button 
+              @click="navigate('upload')" 
+              :class="currentPage === 'upload' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'"
+              class="px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2"
+            >
+              <i class="fas fa-upload text-sm"></i>
+              <span>Upload</span>
+            </button>
+            <button 
+              @click="navigate('sources')" 
+              :class="currentPage === 'sources' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'"
+              class="px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2"
+            >
+              <i class="fas fa-globe text-sm"></i>
+              <span>Sources</span>
+            </button>
+            <button 
+              @click="navigate('entries')" 
+              :class="currentPage === 'entries' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'"
+              class="px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2"
+            >
+              <i class="fas fa-list text-sm"></i>
+              <span>Entries</span>
+            </button>
+          </div>
+
+          <!-- Right Side Actions -->
+          <div class="flex items-center space-x-3">
+            <button 
+              @click="toggleDarkMode" 
+              class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300"
+              title="Toggle dark mode"
+            >
+              <i class="fas text-lg" :class="darkMode ? 'fa-sun text-yellow-500' : 'fa-moon text-primary-600 dark:text-primary-400'"></i>
+            </button>
+            
+            <!-- Mobile Menu Button -->
+            <button 
+              @click="mobileMenuOpen = !mobileMenuOpen"
+              class="md:hidden p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300"
+            >
+              <i class="fas" :class="mobileMenuOpen ? 'fa-times' : 'fa-bars'"></i>
+            </button>
+          </div>
         </div>
-        <div class="flex items-center space-x-3">
-          <button @click="toggleDarkMode" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-            <i class="fas" :class="darkMode ? 'fa-sun text-yellow-400' : 'fa-moon text-indigo-600'"></i>
-          </button>
+
+        <!-- Mobile Navigation -->
+        <div 
+          x-show="mobileMenuOpen" 
+          x-transition
+          class="md:hidden pb-4 border-t border-gray-200 dark:border-gray-700 mt-2 pt-4"
+        >
+          <div class="flex flex-col space-y-1">
+            <button 
+              @click="navigate('search'); mobileMenuOpen = false" 
+              :class="currentPage === 'search' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
+              class="px-4 py-2 rounded-lg font-medium transition-all flex items-center space-x-2"
+            >
+              <i class="fas fa-search"></i>
+              <span>Search</span>
+            </button>
+            <button 
+              @click="navigate('collections'); mobileMenuOpen = false" 
+              :class="currentPage === 'collections' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
+              class="px-4 py-2 rounded-lg font-medium transition-all flex items-center space-x-2"
+            >
+              <i class="fas fa-folder"></i>
+              <span>Collections</span>
+            </button>
+            <button 
+              @click="navigate('upload'); mobileMenuOpen = false" 
+              :class="currentPage === 'upload' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
+              class="px-4 py-2 rounded-lg font-medium transition-all flex items-center space-x-2"
+            >
+              <i class="fas fa-upload"></i>
+              <span>Upload</span>
+            </button>
+            <button 
+              @click="navigate('sources'); mobileMenuOpen = false" 
+              :class="currentPage === 'sources' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
+              class="px-4 py-2 rounded-lg font-medium transition-all flex items-center space-x-2"
+            >
+              <i class="fas fa-globe"></i>
+              <span>Sources</span>
+            </button>
+            <button 
+              @click="navigate('entries'); mobileMenuOpen = false" 
+              :class="currentPage === 'entries' ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
+              class="px-4 py-2 rounded-lg font-medium transition-all flex items-center space-x-2"
+            >
+              <i class="fas fa-list"></i>
+              <span>Entries</span>
+            </button>
+          </div>
         </div>
       </div>
     </nav>
-    
-    <div class="container mx-auto p-4 md:p-6">
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Left Column -->
-        <div class="space-y-6">
-          <!-- Create Collection Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
-            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-              <div class="flex items-center">
-                <i class="fas fa-folder-plus text-indigo-600 dark:text-indigo-400 mr-2"></i>
-                <h2 class="text-xl font-semibold">Create Collection</h2>
-              </div>
-            </div>
-            <div class="p-5">
-              <div class="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3">
-                <input 
-                  type="text" 
-                  placeholder="Collection Name" 
-                  x-model="newCollectionName" 
-                  class="flex-grow border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                >
-                <button 
-                  @click="createCollection" 
-                  class="flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                  :disabled="loading.create"
-                >
-                  <i class="fas fa-spinner fa-spin mr-2" x-show="loading.create"></i>
-                  <span x-text="loading.create ? 'Creating...' : 'Create'"></span>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Search Page (Default) -->
+      <div x-show="currentPage === 'search'" x-transition class="page-transition" x-data="searchPage()">
+        <div class="max-w-4xl mx-auto">
+          <div class="mb-6">
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-2 flex items-center">
+              <i class="fas fa-search text-primary-600 dark:text-primary-400 mr-3"></i>
+              Search Collections
+            </h2>
+            <p class="text-gray-600 dark:text-gray-400">Search through your collection content using semantic search</p>
+          </div>
+
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div class="p-6 space-y-6">
+              <!-- Error Banner -->
+              <div 
+                x-show="searchError" 
+                x-transition
+                class="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 px-4 py-3 rounded-lg flex items-start justify-between"
+              >
+                <div class="flex items-start space-x-3 flex-1">
+                  <i class="fas fa-exclamation-circle text-red-500 mt-0.5"></i>
+                  <div class="flex-1">
+                    <p class="font-semibold">Search Error</p>
+                    <p class="text-sm" x-text="searchError"></p>
+                  </div>
+                </div>
+                <button @click="searchError = ''" class="text-red-500 hover:text-red-700 dark:hover:text-red-300 ml-4">
+                  <i class="fas fa-times"></i>
                 </button>
+              </div>
+
+              <!-- Search Form -->
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <i class="fas fa-folder mr-2 text-primary-600 dark:text-primary-400"></i>
+                    Collection
+                  </label>
+                  <select 
+                    x-model="selectedSearchCollection" 
+                    class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white"
+                  >
+                    <option value="" disabled>Select a Collection</option>
+                    <template x-for="collection in collections" :key="collection">
+                      <option :value="collection" x-text="collection"></option>
+                    </template>
+                  </select>
+                </div>
+                
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <i class="fas fa-search mr-2 text-primary-600 dark:text-primary-400"></i>
+                    Search Query
+                  </label>
+                  <div class="relative">
+                    <input 
+                      type="text" 
+                      placeholder="Enter your search query..." 
+                      x-model="searchQuery" 
+                      @keyup.enter="searchCollection()"
+                      class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 pl-12 pr-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white placeholder-gray-400"
+                    >
+                    <i class="fas fa-search text-gray-400 absolute left-4 top-1/2 transform -translate-y-1/2"></i>
+                  </div>
+                </div>
+
+                <div class="flex gap-4">
+                  <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Max Results
+                    </label>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      max="20" 
+                      x-model="maxResults" 
+                      class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white"
+                    >
+                  </div>
+                  <div class="flex items-end">
+                    <button 
+                      @click="searchCollection()" 
+                      :disabled="loading.search"
+                      class="w-full bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 px-8 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 min-w-[140px]"
+                    >
+                      <i class="fas" :class="loading.search ? 'fa-spinner fa-spin' : 'fa-search'"></i>
+                      <span x-text="loading.search ? 'Searching...' : 'Search'"></span>
+                    </button>
+                  </div>
+                </div>
+                
+                <div class="text-sm text-gray-500 dark:text-gray-400 flex items-center">
+                  <i class="fas fa-clock mr-2"></i>
+                  <span>Last search: <span x-text="searchTimestamp || 'Not searched yet'"></span></span>
+                </div>
+              </div>
+              
+              <!-- Results Section -->
+              <div class="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                    <i class="fas fa-list-ul mr-2 text-primary-600 dark:text-primary-400"></i>
+                    Results
+                  </h3>
+                  <span 
+                    x-show="searchResults.length" 
+                    class="bg-primary-100 dark:bg-primary-900 text-primary-800 dark:text-primary-200 px-3 py-1 rounded-full text-sm font-medium"
+                    x-text="searchResults.length + ' found'"
+                  ></span>
+                </div>
+                <div class="space-y-3 max-h-96 overflow-y-auto">
+                  <template x-if="!searchResults.length && !loading.search && !searchError">
+                    <div class="text-center py-12 text-gray-500 dark:text-gray-400">
+                      <i class="fas fa-search text-4xl mb-4 opacity-50"></i>
+                      <p class="text-lg">No results to display</p>
+                      <p class="text-sm mt-2">Enter a search query and click Search to find content</p>
+                    </div>
+                  </template>
+                  <template x-for="(result, index) in searchResults" :key="index">
+                    <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+                      <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-semibold text-primary-600 dark:text-primary-400">Result #<span x-text="index + 1"></span></span>
+                      </div>
+                      <pre class="text-sm whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200 font-mono" x-text="result"></pre>
+                    </div>
+                  </template>
+                </div>
               </div>
             </div>
           </div>
-          
-          <!-- Upload File Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
-            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-              <div class="flex items-center">
-                <i class="fas fa-cloud-upload-alt text-green-600 dark:text-green-400 mr-2"></i>
-                <h2 class="text-xl font-semibold">Upload File</h2>
+        </div>
+      </div>
+
+      <!-- Collections Page -->
+      <div x-show="currentPage === 'collections'" x-transition class="page-transition" x-data="collectionsPage()">
+        <div class="max-w-4xl mx-auto">
+          <div class="mb-6">
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-2 flex items-center">
+              <i class="fas fa-folder text-primary-600 dark:text-primary-400 mr-3"></i>
+              Collections
+            </h2>
+            <p class="text-gray-600 dark:text-gray-400">Create and manage your collections</p>
+          </div>
+
+          <div class="space-y-6">
+            <!-- Create Collection Card -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div class="bg-gradient-to-r from-primary-50 to-primary-100 dark:from-primary-900/30 dark:to-primary-800/30 px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <i class="fas fa-plus-circle text-primary-600 dark:text-primary-400 mr-2"></i>
+                  Create New Collection
+                </h3>
+              </div>
+              <div class="p-6">
+                <div class="flex flex-col sm:flex-row gap-3">
+                  <input 
+                    type="text" 
+                    placeholder="Enter collection name..." 
+                    x-model="newCollectionName" 
+                    @keyup.enter="createCollection()"
+                    class="flex-1 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white placeholder-gray-400"
+                  >
+                  <button 
+                    @click="createCollection()" 
+                    :disabled="loading.create"
+                    class="bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 px-6 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 min-w-[140px]"
+                  >
+                    <i class="fas" :class="loading.create ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+                    <span x-text="loading.create ? 'Creating...' : 'Create'"></span>
+                  </button>
+                </div>
               </div>
             </div>
-            <div class="p-5 space-y-4">
-              <div class="flex flex-col space-y-3">
+
+            <!-- Collections List Card -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div class="bg-gradient-to-r from-amber-50 to-amber-100 dark:from-amber-900/30 dark:to-amber-800/30 px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <i class="fas fa-folder-open text-amber-600 dark:text-amber-400 mr-2"></i>
+                  Your Collections
+                </h3>
+                <button 
+                  @click="fetchCollections()" 
+                  :disabled="loading.collections"
+                  class="p-2 rounded-lg hover:bg-white dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300"
+                  title="Refresh collections"
+                >
+                  <i class="fas" :class="loading.collections ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>
+                </button>
+              </div>
+              <div class="p-6">
+                <div class="space-y-3">
+                  <template x-if="!collections.length && !loading.collections">
+                    <div class="text-center py-12 text-gray-500 dark:text-gray-400">
+                      <i class="fas fa-folder-open text-4xl mb-4 opacity-50"></i>
+                      <p class="text-lg">No collections found</p>
+                      <p class="text-sm mt-2">Create your first collection to get started</p>
+                    </div>
+                  </template>
+                  <template x-for="collection in collections" :key="collection">
+                    <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all group">
+                      <div class="flex items-center space-x-3 flex-1 min-w-0">
+                        <i class="fas fa-folder text-amber-600 dark:text-amber-400 text-xl"></i>
+                        <span class="font-medium text-gray-900 dark:text-white truncate" x-text="collection"></span>
+                        <span class="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 dark:bg-primary-900 text-primary-800 dark:text-primary-200">
+                          Active
+                        </span>
+                      </div>
+                      <button 
+                        @click="confirmResetCollection(collection)" 
+                        :disabled="loading.reset === collection"
+                        class="ml-3 text-orange-600 hover:text-orange-700 dark:text-orange-400 dark:hover:text-orange-300 p-2 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-all focus:outline-none"
+                        title="Reset Collection"
+                      >
+                        <i class="fas" :class="loading.reset === collection ? 'fa-spinner fa-spin' : 'fa-redo-alt'"></i>
+                      </button>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload Page -->
+      <div x-show="currentPage === 'upload'" x-transition class="page-transition" x-data="uploadPage()">
+        <div class="max-w-2xl mx-auto">
+          <div class="mb-6">
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-2 flex items-center">
+              <i class="fas fa-upload text-primary-600 dark:text-primary-400 mr-3"></i>
+              Upload Files
+            </h2>
+            <p class="text-gray-600 dark:text-gray-400">Upload files to your collections for indexing</p>
+          </div>
+
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div class="bg-gradient-to-r from-green-50 to-green-100 dark:from-green-900/30 dark:to-green-800/30 px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <i class="fas fa-cloud-upload-alt text-green-600 dark:text-green-400 mr-2"></i>
+                File Upload
+              </h3>
+            </div>
+            <div class="p-6 space-y-6">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <i class="fas fa-folder mr-2 text-primary-600 dark:text-primary-400"></i>
+                  Select Collection
+                </label>
                 <select 
                   x-model="selectedCollection" 
-                  class="border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white"
                 >
                   <option value="" disabled>Select a Collection</option>
                   <template x-for="collection in collections" :key="collection">
                     <option :value="collection" x-text="collection"></option>
                   </template>
                 </select>
-                
-                <div class="border-2 border-dashed dark:border-gray-600 rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                     @click="document.getElementById('fileUpload').click()">
-                  <i class="fas fa-file-upload text-gray-400 text-2xl mb-2"></i>
-                  <p class="text-sm text-gray-500 dark:text-gray-400" x-text="fileName || 'Click to select file or drag and drop'"></p>
+              </div>
+              
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <i class="fas fa-file mr-2 text-primary-600 dark:text-primary-400"></i>
+                  Select File
+                </label>
+                <div 
+                  @click="document.getElementById('fileUpload').click()"
+                  class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center cursor-pointer hover:border-primary-500 dark:hover:border-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all"
+                >
+                  <i class="fas fa-file-upload text-4xl text-gray-400 dark:text-gray-500 mb-4"></i>
+                  <p class="text-gray-700 dark:text-gray-300 font-medium mb-1" x-text="fileName || 'Click to select file or drag and drop'"></p>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">Supported formats: PDF, TXT, MD, and more</p>
                   <input 
                     type="file" 
                     id="fileUpload" 
@@ -104,337 +455,233 @@
                     @change="fileName = $event.target.files[0] ? $event.target.files[0].name : ''"
                   >
                 </div>
-                
-                <button 
-                  @click="uploadFile" 
-                  class="flex items-center justify-center bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
-                  :disabled="loading.upload"
-                >
-                  <i class="fas fa-spinner fa-spin mr-2" x-show="loading.upload"></i>
-                  <span x-text="loading.upload ? 'Uploading...' : 'Upload'"></span>
-                </button>
               </div>
-            </div>
-          </div>
-          
-          <!-- External Sources Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
-            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-              <div class="flex items-center">
-                <i class="fas fa-globe text-blue-600 dark:text-blue-400 mr-2"></i>
-                <h2 class="text-xl font-semibold">External Sources</h2>
-              </div>
-            </div>
-            <div class="p-5 space-y-4">
-              <div class="flex flex-col space-y-3">
-                <select 
-                  x-model="selectedSourceCollection" 
-                  @change="listSources" 
-                  class="border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                >
-                  <option value="" disabled>Select a Collection</option>
-                  <template x-for="collection in collections" :key="collection">
-                    <option :value="collection" x-text="collection"></option>
-                  </template>
-                </select>
-                
-                <div class="flex flex-col space-y-2">
-                  <input 
-                    type="text" 
-                    placeholder="Source URL" 
-                    x-model="newSourceURL" 
-                    class="border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                  >
-                  <div class="flex items-center space-x-2">
-                    <input 
-                      type="number" 
-                      min="1" 
-                      placeholder="Update interval (minutes)" 
-                      x-model="newSourceInterval" 
-                      class="w-1/2 border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    >
-                    <button 
-                      @click="addSource" 
-                      class="w-1/2 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-                      :disabled="loading.addSource"
-                    >
-                      <i class="fas fa-spinner fa-spin mr-2" x-show="loading.addSource"></i>
-                      <span x-text="loading.addSource ? 'Adding...' : 'Add Source'"></span>
-                    </button>
-                  </div>
-                </div>
-
-                <div class="mt-4">
-                  <div class="flex items-center justify-between pb-2 border-b dark:border-gray-700">
-                    <h3 class="font-bold">Registered Sources</h3>
-                    <div x-show="loading.sources" class="text-blue-600 dark:text-blue-400">
-                      <i class="fas fa-spinner fa-spin"></i>
-                    </div>
-                  </div>
-                  <div class="max-h-60 overflow-y-auto mt-2">
-                    <ul class="space-y-2">
-                      <template x-if="!sources.length && !loading.sources">
-                        <li class="text-center py-8 text-gray-500 dark:text-gray-400">
-                          <i class="fas fa-globe text-2xl mb-2"></i>
-                          <p>No sources registered</p>
-                        </li>
-                      </template>
-                      <template x-for="source in sources" :key="source.url">
-                        <li class="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-650 group transition-all">
-                          <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-2 max-w-[80%]">
-                              <i class="fas fa-globe text-blue-600 dark:text-blue-400"></i>
-                              <div class="flex flex-col">
-                                <span class="truncate" x-text="source.url"></span>
-                                <span class="text-xs text-gray-500 dark:text-gray-400" x-text="'Update every ' + source.update_interval + ' minutes'"></span>
-                              </div>
-                            </div>
-                            <button 
-                              @click="removeSource(source.url)" 
-                              class="text-red-500 hover:text-red-700 p-1 opacity-0 group-hover:opacity-100 transition-all focus:outline-none"
-                              :disabled="loading.removeSource === source.url"
-                            >
-                              <i class="fas" :class="loading.removeSource === source.url ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
-                            </button>
-                          </div>
-                        </li>
-                      </template>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Collections List Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
-            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center">
-                  <i class="fas fa-folder text-amber-600 dark:text-amber-400 mr-2"></i>
-                  <h2 class="text-xl font-semibold">Collections</h2>
-                </div>
-                <button 
-                  @click="fetchCollections" 
-                  class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-600 dark:text-gray-300"
-                  :class="{'animate-spin': loading.collections}"
-                >
-                  <i class="fas fa-sync-alt"></i>
-                </button>
-              </div>
-            </div>
-            <div class="p-5">
-              <div class="max-h-60 overflow-y-auto">
-                <ul class="space-y-2">
-                  <template x-if="!collections.length">
-                    <li class="text-center py-8 text-gray-500 dark:text-gray-400">
-                      <i class="fas fa-folder-open text-2xl mb-2"></i>
-                      <p>No collections found</p>
-                    </li>
-                  </template>
-                  <template x-for="collection in collections" :key="collection">
-                    <li class="flex items-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-650 transition-colors">
-                      <i class="fas fa-folder-open text-amber-600 dark:text-amber-400 mr-2"></i>
-                      <span class="flex-grow" x-text="collection"></span>
-                      <span class="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full"></span>
-                      <!-- Added Reset Button -->
-                      <button 
-                        @click="confirmResetCollection(collection)" 
-                        class="ml-2 text-orange-500 hover:text-orange-700 p-1 transition-all focus:outline-none"
-                        :disabled="loading.reset === collection"
-                        title="Reset Collection"
-                      >
-                        <i class="fas" :class="loading.reset === collection ? 'fa-spinner fa-spin' : 'fa-redo-alt'"></i>
-                      </button>
-                    </li>
-                  </template>
-                </ul>
-              </div>
+              
+              <button 
+                @click="uploadFile()" 
+                :disabled="loading.upload"
+                class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+              >
+                <i class="fas" :class="loading.upload ? 'fa-spinner fa-spin' : 'fa-upload'"></i>
+                <span x-text="loading.upload ? 'Uploading...' : 'Upload File'"></span>
+              </button>
             </div>
           </div>
         </div>
-        
-        <!-- Right Column -->
-        <div class="space-y-6">
-          <!-- List Entries Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
-            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center">
-                  <i class="fas fa-list text-blue-600 dark:text-blue-400 mr-2"></i>
-                  <h2 class="text-xl font-semibold">Collection Entries</h2>
-                </div>
-                <!-- Added Reset Button for selected collection -->
-                <button 
-                  @click="confirmResetCollection(selectedListCollection)" 
-                  class="text-orange-500 hover:text-orange-700 p-1 transition-colors focus:outline-none disabled:opacity-50"
-                  :disabled="!selectedListCollection || loading.reset === selectedListCollection"
-                  title="Reset Collection"
-                >
-                  <i class="fas" :class="loading.reset === selectedListCollection ? 'fa-spinner fa-spin' : 'fa-redo-alt'"></i>
-                  <span class="text-sm ml-1">Reset</span>
-                </button>
-              </div>
-            </div>
-            <div class="p-5 space-y-4">
-              <select 
-                x-model="selectedListCollection" 
-                @change="listEntries" 
-                class="w-full border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-              >
-                <option value="" disabled>Select a Collection</option>
-                <template x-for="collection in collections" :key="collection">
-                  <option :value="collection" x-text="collection"></option>
-                </template>
-              </select>
-              
-              <div class="mt-4">
-                <div class="flex items-center justify-between pb-2 border-b dark:border-gray-700">
-                  <h3 class="font-bold">Entries</h3>
-                  <div x-show="loading.entries" class="text-blue-600 dark:text-blue-400">
-                    <i class="fas fa-spinner fa-spin"></i>
-                  </div>
-                </div>
-                <div class="max-h-80 overflow-y-auto mt-2">
-                  <ul class="space-y-2">
-                    <template x-if="!entries.length && !loading.entries">
-                      <li class="text-center py-8 text-gray-500 dark:text-gray-400">
-                        <i class="fas fa-file-alt text-2xl mb-2"></i>
-                        <p>No entries found</p>
-                      </li>
-                    </template>
-                    <template x-for="entry in entries" :key="entry">
-                      <li class="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-650 group transition-all">
-                        <div class="flex items-center justify-between">
-                          <div class="flex items-center space-x-2 max-w-[80%]">
-                            <i class="fas fa-file-alt text-blue-600 dark:text-blue-400"></i>
-                            <span class="truncate" x-text="entry"></span>
-                          </div>
-                          <button 
-                            @click="deleteEntry(entry)" 
-                            class="text-red-500 hover:text-red-700 p-1 opacity-0 group-hover:opacity-100 transition-all focus:outline-none"
-                            :disabled="loading.delete === entry"
-                          >
-                            <i class="fas" :class="loading.delete === entry ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
-                          </button>
-                        </div>
-                      </li>
-                    </template>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Search Card -->
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden transition-all hover:shadow-lg">
-            <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-              <div class="flex items-center">
-                <i class="fas fa-search text-purple-600 dark:text-purple-400 mr-2"></i>
-                <h2 class="text-xl font-semibold">Search Collection</h2>
-              </div>
-            </div>
-            <div class="p-5 space-y-4">
-              <!-- Error Banner -->
-              <div 
-                x-show="searchError" 
-                x-transition:enter="transition ease-out duration-300"
-                x-transition:enter-start="opacity-0 transform scale-95"
-                x-transition:enter-end="opacity-100 transform scale-100"
-                class="bg-red-100 border border-red-400 text-red-700 dark:bg-red-900 dark:border-red-700 dark:text-red-200 px-4 py-3 rounded relative mb-4"
-              >
-                <div class="flex items-start">
-                  <div class="flex-shrink-0 mt-0.5">
-                    <i class="fas fa-exclamation-circle"></i>
-                  </div>
-                  <div class="ml-3 flex-1">
-                    <p class="font-medium">Search Error</p>
-                    <p class="text-sm" x-text="searchError"></p>
-                  </div>
-                  <button @click="searchError = ''" class="ml-auto -mx-1.5 -my-1.5 bg-red-100 dark:bg-red-900 text-red-500 dark:text-red-200 rounded-lg p-1.5 hover:bg-red-200 dark:hover:bg-red-800 inline-flex h-8 w-8 transition">
-                    <i class="fas fa-times m-auto"></i>
-                  </button>
-                </div>
-              </div>
+      </div>
 
-              <div class="space-y-3">
+      <!-- Sources Page -->
+      <div x-show="currentPage === 'sources'" x-transition class="page-transition" x-data="sourcesPage()">
+        <div class="max-w-4xl mx-auto">
+          <div class="mb-6">
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-2 flex items-center">
+              <i class="fas fa-globe text-primary-600 dark:text-primary-400 mr-3"></i>
+              External Sources
+            </h2>
+            <p class="text-gray-600 dark:text-gray-400">Manage external sources that automatically sync to your collections</p>
+          </div>
+
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div class="bg-gradient-to-r from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-800/30 px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <i class="fas fa-link text-blue-600 dark:text-blue-400 mr-2"></i>
+                Add Source
+              </h3>
+            </div>
+            <div class="p-6 space-y-6">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <i class="fas fa-folder mr-2 text-primary-600 dark:text-primary-400"></i>
+                  Collection
+                </label>
                 <select 
-                  x-model="selectedSearchCollection" 
-                  class="w-full border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  x-model="selectedSourceCollection" 
+                  @change="listSources()" 
+                  class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white"
                 >
                   <option value="" disabled>Select a Collection</option>
                   <template x-for="collection in collections" :key="collection">
                     <option :value="collection" x-text="collection"></option>
                   </template>
                 </select>
-                
-                <div class="relative">
+              </div>
+              
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="md:col-span-2">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <i class="fas fa-link mr-2 text-primary-600 dark:text-primary-400"></i>
+                    Source URL
+                  </label>
                   <input 
                     type="text" 
-                    placeholder="Enter search query..." 
-                    x-model="searchQuery" 
-                    class="w-full border dark:border-gray-600 dark:bg-gray-700 pl-10 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    @keyup.enter="searchCollection"
+                    placeholder="https://example.com" 
+                    x-model="newSourceURL" 
+                    class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white placeholder-gray-400"
                   >
-                  <i class="fas fa-search text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2"></i>
                 </div>
-
-                <div class="flex gap-2">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <i class="fas fa-clock mr-2 text-primary-600 dark:text-primary-400"></i>
+                    Update Interval (minutes)
+                  </label>
                   <input 
                     type="number" 
                     min="1" 
-                    max="20" 
-                    placeholder="Max results" 
-                    x-model="maxResults" 
-                    class="w-1/3 border dark:border-gray-600 dark:bg-gray-700 p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="60" 
+                    x-model="newSourceInterval" 
+                    class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white placeholder-gray-400"
                   >
-                  <button 
-                    @click="searchCollection" 
-                    class="w-2/3 flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50"
-                    :disabled="loading.search"
-                  >
-                    <i class="fas fa-spinner fa-spin mr-2" x-show="loading.search"></i>
-                    <span x-text="loading.search ? 'Searching...' : 'Search'"></span>
-                  </button>
-                </div>
-                
-                <div class="text-xs text-gray-500 dark:text-gray-400">
-                  <i class="fas fa-info-circle mr-1"></i> Search timestamp: <span x-text="searchTimestamp || 'Not searched yet'"></span>
                 </div>
               </div>
               
-              <div class="mt-4">
-                <div class="flex items-center justify-between pb-2 border-b dark:border-gray-700">
-                  <h3 class="font-bold">Results</h3>
-                  <span x-show="searchResults.length" class="text-xs bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 px-2 py-1 rounded-full" x-text="searchResults.length + ' found'"></span>
+              <button 
+                @click="addSource()" 
+                :disabled="loading.addSource"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+              >
+                <i class="fas" :class="loading.addSource ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+                <span x-text="loading.addSource ? 'Adding...' : 'Add Source'"></span>
+              </button>
+
+              <!-- Registered Sources -->
+              <div class="pt-6 border-t border-gray-200 dark:border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                    <i class="fas fa-list-ul mr-2 text-primary-600 dark:text-primary-400"></i>
+                    Registered Sources
+                  </h3>
+                  <div x-show="loading.sources" class="text-blue-600 dark:text-blue-400">
+                    <i class="fas fa-spinner fa-spin"></i>
+                  </div>
                 </div>
-                <div class="max-h-60 overflow-y-auto mt-2">
-                  <ul class="space-y-2">
-                    <template x-if="!searchResults.length && !loading.search && !searchError">
-                      <li class="text-center py-8 text-gray-500 dark:text-gray-400">
-                        <i class="fas fa-search text-2xl mb-2"></i>
-                        <p>No results to display</p>
-                      </li>
-                    </template>
-                    <template x-for="(result, index) in searchResults" :key="index">
-                      <li class="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                        <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">Result #<span x-text="index + 1"></span></div>
-                        <pre class="text-sm whitespace-pre-wrap break-words" x-text="result"></pre>
-                      </li>
-                    </template>
-                  </ul>
+                <div class="space-y-3 max-h-96 overflow-y-auto">
+                  <template x-if="!sources.length && !loading.sources">
+                    <div class="text-center py-12 text-gray-500 dark:text-gray-400">
+                      <i class="fas fa-globe text-4xl mb-4 opacity-50"></i>
+                      <p class="text-lg">No sources registered</p>
+                      <p class="text-sm mt-2">Add a source URL above to get started</p>
+                    </div>
+                  </template>
+                  <template x-for="source in sources" :key="source.url">
+                    <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all group">
+                      <div class="flex items-center space-x-3 flex-1 min-w-0">
+                        <i class="fas fa-globe text-blue-600 dark:text-blue-400 text-xl"></i>
+                        <div class="flex-1 min-w-0">
+                          <p class="font-medium text-gray-900 dark:text-white truncate" x-text="source.url"></p>
+                          <p class="text-sm text-gray-500 dark:text-gray-400" x-text="'Updates every ' + source.update_interval + ' minutes'"></p>
+                        </div>
+                      </div>
+                      <button 
+                        @click="removeSource(source.url)" 
+                        :disabled="loading.removeSource === source.url"
+                        class="ml-3 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 transition-all focus:outline-none"
+                        title="Remove source"
+                      >
+                        <i class="fas" :class="loading.removeSource === source.url ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
+                      </button>
+                    </div>
+                  </template>
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
-    
+
+      <!-- Entries Page -->
+      <div x-show="currentPage === 'entries'" x-transition class="page-transition" x-data="entriesPage()">
+        <div class="max-w-4xl mx-auto">
+          <div class="mb-6">
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-2 flex items-center">
+              <i class="fas fa-list text-primary-600 dark:text-primary-400 mr-3"></i>
+              Collection Entries
+            </h2>
+            <p class="text-gray-600 dark:text-gray-400">View and manage entries in your collections</p>
+          </div>
+
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div class="bg-gradient-to-r from-purple-50 to-purple-100 dark:from-purple-900/30 dark:to-purple-800/30 px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <i class="fas fa-file-alt text-purple-600 dark:text-purple-400 mr-2"></i>
+                Entries
+              </h3>
+              <button 
+                @click="confirmResetCollection(selectedListCollection)" 
+                :disabled="!selectedListCollection || loading.reset === selectedListCollection"
+                class="text-orange-600 hover:text-orange-700 dark:text-orange-400 dark:hover:text-orange-300 p-2 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                title="Reset Collection"
+              >
+                <i class="fas" :class="loading.reset === selectedListCollection ? 'fa-spinner fa-spin' : 'fa-redo-alt'"></i>
+                <span class="hidden sm:inline ml-1">Reset</span>
+              </button>
+            </div>
+            <div class="p-6 space-y-6">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <i class="fas fa-folder mr-2 text-primary-600 dark:text-primary-400"></i>
+                  Select Collection
+                </label>
+                <select 
+                  x-model="selectedListCollection" 
+                  @change="listEntries()" 
+                  class="w-full border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 px-4 py-3 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-gray-900 dark:text-white"
+                >
+                  <option value="" disabled>Select a Collection</option>
+                  <template x-for="collection in collections" :key="collection">
+                    <option :value="collection" x-text="collection"></option>
+                  </template>
+                </select>
+              </div>
+              
+              <div class="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                    <i class="fas fa-list-ul mr-2 text-primary-600 dark:text-primary-400"></i>
+                    Entry List
+                  </h3>
+                  <div x-show="loading.entries" class="text-primary-600 dark:text-primary-400">
+                    <i class="fas fa-spinner fa-spin"></i>
+                  </div>
+                </div>
+                <div class="space-y-3 max-h-96 overflow-y-auto">
+                  <template x-if="!entries.length && !loading.entries">
+                    <div class="text-center py-12 text-gray-500 dark:text-gray-400">
+                      <i class="fas fa-file-alt text-4xl mb-4 opacity-50"></i>
+                      <p class="text-lg">No entries found</p>
+                      <p class="text-sm mt-2">Select a collection to view its entries</p>
+                    </div>
+                  </template>
+                  <template x-for="entry in entries" :key="entry">
+                    <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all group">
+                      <div class="flex items-center space-x-3 flex-1 min-w-0">
+                        <i class="fas fa-file-alt text-purple-600 dark:text-purple-400 text-xl"></i>
+                        <span class="font-medium text-gray-900 dark:text-white truncate" x-text="entry"></span>
+                      </div>
+                      <button 
+                        @click="deleteEntry(entry)" 
+                        :disabled="loading.delete === entry"
+                        class="ml-3 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 transition-all focus:outline-none"
+                        title="Delete entry"
+                      >
+                        <i class="fas" :class="loading.delete === entry ? 'fa-spinner fa-spin' : 'fa-trash'"></i>
+                      </button>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
     <!-- Footer -->
-    <footer class="bg-white dark:bg-gray-800 shadow-inner mt-8 py-4">
-      <div class="container mx-auto px-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-        <span>LocalRecall</span>
+    <footer class="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 mt-auto py-6">
+      <div class="container mx-auto px-4 sm:px-6 lg:px-8 text-center text-gray-500 dark:text-gray-400 text-sm">
+        <p class="flex items-center justify-center space-x-2">
+          <i class="fas fa-brain text-primary-600 dark:text-primary-400"></i>
+          <span>LocalRecall - Semantic Search & RAG System</span>
+        </p>
       </div>
     </footer>
   </div>
