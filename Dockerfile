@@ -1,5 +1,5 @@
 # Build the Go binary in a separate stage utilizing Makefile
-FROM golang:1.23 AS builder
+FROM golang:1.24 AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./

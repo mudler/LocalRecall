@@ -272,9 +272,12 @@ var _ = Describe("PostgresDB", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		It("should return error when collection is empty", func() {
-			_, err := db.GetEmbeddingDimensions()
-			Expect(err).To(HaveOccurred())
+		It("should return dimensions from config even when collection is empty", func() {
+			// Dimensions are stored in collection_config during initialization,
+			// so we should get them even if there are no documents
+			dims, err := db.GetEmbeddingDimensions()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(dims).To(BeNumerically(">", 0))
 		})
 
 		It("should return embedding dimensions after storing a document", func() {

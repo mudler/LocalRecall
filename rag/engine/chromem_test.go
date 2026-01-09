@@ -117,8 +117,8 @@ var _ = Describe("ChromemDB", func() {
 			})
 			Expect(err).ToNot(HaveOccurred())
 
-			// Search for it
-			results, err := db.Search("fox", 5)
+			// Search for it - request 1 result since we only have 1 document
+			results, err := db.Search("fox", 1)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(len(results)).To(BeNumerically(">=", 1))
 			Expect(results[0].Content).To(ContainSubstring("fox"))
