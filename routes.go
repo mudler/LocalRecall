@@ -26,8 +26,10 @@ func newVectorEngine(
 	apiURL, apiKey, collectionName, dbPath, embeddingModel string, maxChunkSize int) *rag.PersistentKB {
 	switch vectorEngineType {
 	case "chromem":
+		xlog.Info("Chromem collection", "collectionName", collectionName, "dbPath", dbPath)
 		return rag.NewPersistentChromeCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize)
 	case "localai":
+		xlog.Info("LocalAI collection", "collectionName", collectionName, "apiURL", apiURL)
 		return rag.NewPersistentLocalAICollection(llmClient, apiURL, apiKey, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize)
 	case "postgres":
 		databaseURL := os.Getenv("DATABASE_URL")
@@ -35,6 +37,7 @@ func newVectorEngine(
 			xlog.Error("DATABASE_URL is required for PostgreSQL engine")
 			os.Exit(1)
 		}
+		xlog.Info("PostgreSQL collection", "collectionName", collectionName, "databaseURL", databaseURL)
 		return rag.NewPersistentPostgresCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, databaseURL)
 	default:
 		xlog.Error("Unknown vector engine", "engine", vectorEngineType)
