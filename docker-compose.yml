@@ -12,8 +12,10 @@ services:
       - ./volumes/images/:/tmp/generated/images/
     command:
       - granite-embedding-107m-multilingual
-  postgres:
-    image: timescale/timescaledb:latest-pg16
+  postgres:   
+    build:
+      context: .
+      dockerfile: Dockerfile.pgsql
     ports:
       - 5432:5432
     environment:
