@@ -273,10 +273,16 @@ func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]en
 		}
 		metadata["type"] = "file"
 		metadata["source"] = c
-		xlog.Info("Storing pieces", "pieces", pieces, "metadata", metadata)
+		xlog.Info("Storing pieces", "pieces", len(pieces), "chunk_count", len(pieces), "file", c, "metadata", metadata)
+		if len(pieces) == 0 {
+			return nil, fmt.Errorf("no chunks generated for file: %s", c)
+		}
 		res, err := db.Engine.StoreDocuments(pieces, metadata)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to store documents: %w", err)
+		}
+		if len(res) != len(pieces) {
+			return nil, fmt.Errorf("stored %d chunks but expected %d for file: %s", len(res), len(pieces), c)
 		}
 		results = append(results, res...)
 		db.index[c] = results
