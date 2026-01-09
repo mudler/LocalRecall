@@ -21,17 +21,30 @@ psql --username postgres --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS timescaledb;
 
     -- Create vectorscale extension (from TimescaleDB) - may not be available
-    CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
+    -- Try both 'vectorscale' and 'pgvectorscale' as extension names
+    DO \$\$ 
+    BEGIN
+        BEGIN
+            CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
+        EXCEPTION WHEN OTHERS THEN
+            BEGIN
+                CREATE EXTENSION IF NOT EXISTS pgvectorscale CASCADE;
+            EXCEPTION WHEN OTHERS THEN
+                RAISE NOTICE 'Neither vectorscale nor pgvectorscale extension available';
+            END;
+        END;
+    END \$\$;
 
     -- Create vector extension as fallback (pgvector) - always available
     CREATE EXTENSION IF NOT EXISTS vector;
 EOSQL
 
 # Check if vectorscale was created, warn if not
-if psql -t -A --username postgres --dbname "$POSTGRES_DB" -c "SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'" 2>/dev/null | grep -q 1; then
-    echo "vectorscale extension created successfully"
+if psql -t -A --username postgres --dbname "$POSTGRES_DB" -c "SELECT 1 FROM pg_extension WHERE extname IN ('vectorscale', 'pgvectorscale')" 2>/dev/null | grep -q 1; then
+    EXT_NAME=$(psql -t -A --username postgres --dbname "$POSTGRES_DB" -c "SELECT extname FROM pg_extension WHERE extname IN ('vectorscale', 'pgvectorscale') LIMIT 1" 2>/dev/null | tr -d ' ')
+    echo "$EXT_NAME extension created successfully"
 else
-    echo "Warning: vectorscale extension not available, will use vector (pgvector) as fallback"
+    echo "Warning: vectorscale/pgvectorscale extension not available, will use vector (pgvector) as fallback"
 fi
 
 echo "Extensions created successfully"

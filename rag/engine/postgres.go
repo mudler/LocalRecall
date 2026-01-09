@@ -133,13 +133,31 @@ func (p *PostgresDB) setupDatabase() error {
 		xlog.Warn("Failed to enable pg_textsearch extension", "error", err)
 	}
 
-	_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE")
-	if err != nil {
-		xlog.Warn("Failed to enable vectorscale extension", "error", err)
-		// Try pgvector as fallback
-		_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+	// Check if vectorscale extension is already installed
+	var vectorscaleInstalled bool
+	var extName string
+	err = p.pool.QueryRow(ctx, "SELECT extname FROM pg_extension WHERE extname IN ('vectorscale', 'pgvectorscale') LIMIT 1").Scan(&extName)
+	if err == nil {
+		vectorscaleInstalled = true
+		xlog.Info("vectorscale extension already installed", "name", extName)
+	} else {
+		// Try to create vectorscale extension (may be named 'vectorscale' or 'pgvectorscale')
+		_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE")
 		if err != nil {
-			xlog.Warn("Failed to enable vector extension", "error", err)
+			// Try pgvectorscale as alternative name
+			_, err2 := p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgvectorscale CASCADE")
+			if err2 != nil {
+				xlog.Warn("Failed to enable vectorscale/pgvectorscale extension, using pgvector fallback", "error", err, "error2", err2)
+				// Try pgvector as fallback
+				_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+				if err != nil {
+					xlog.Warn("Failed to enable vector extension", "error", err)
+				}
+			} else {
+				vectorscaleInstalled = true
+			}
+		} else {
+			vectorscaleInstalled = true
 		}
 	}
 
@@ -193,19 +211,34 @@ func (p *PostgresDB) setupDatabase() error {
 		xlog.Warn("Failed to create BM25 index", "error", err)
 	}
 
-	// Vector index (try DiskANN first, fallback to HNSW)
-	_, err = p.pool.Exec(ctx, fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_embedding ON %s 
-		USING diskann(embedding)
-	`, p.tableName, p.tableName))
-	if err != nil {
-		xlog.Warn("Failed to create DiskANN index, trying HNSW", "error", err)
+	// Vector index (try DiskANN first if vectorscale is available, fallback to HNSW)
+	if vectorscaleInstalled {
+		_, err = p.pool.Exec(ctx, fmt.Sprintf(`
+			CREATE INDEX IF NOT EXISTS idx_%s_embedding ON %s 
+			USING diskann(embedding)
+		`, p.tableName, p.tableName))
+		if err != nil {
+			xlog.Warn("Failed to create DiskANN index, trying HNSW", "error", err)
+			_, err = p.pool.Exec(ctx, fmt.Sprintf(`
+				CREATE INDEX IF NOT EXISTS idx_%s_embedding ON %s 
+				USING hnsw(embedding vector_cosine_ops)
+			`, p.tableName, p.tableName))
+			if err != nil {
+				xlog.Warn("Failed to create HNSW index", "error", err)
+			}
+		} else {
+			xlog.Info("Created DiskANN index for vector search")
+		}
+	} else {
+		// vectorscale not available, use HNSW from pgvector
 		_, err = p.pool.Exec(ctx, fmt.Sprintf(`
 			CREATE INDEX IF NOT EXISTS idx_%s_embedding ON %s 
 			USING hnsw(embedding vector_cosine_ops)
 		`, p.tableName, p.tableName))
 		if err != nil {
 			xlog.Warn("Failed to create HNSW index", "error", err)
+		} else {
+			xlog.Info("Created HNSW index for vector search (pgvector)")
 		}
 	}
 
@@ -385,11 +418,6 @@ func (p *PostgresDB) GetEmbeddingDimensions() (int, error) {
 	embeddingStr = strings.Trim(embeddingStr, "[]")
 	parts := strings.Split(embeddingStr, ",")
 	return len(parts), nil
-}
-
-func (p *PostgresDB) embedding() ([]float32, error) {
-	// This is a helper that will be used internally
-	return nil, fmt.Errorf("use getEmbeddingForText instead")
 }
 
 func (p *PostgresDB) getEmbeddingForText(ctx context.Context, text string) ([]float32, error) {
