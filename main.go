@@ -32,6 +32,8 @@ func init() {
 	if collectionDBPath == "" {
 		collectionDBPath = "collections"
 	}
+	os.MkdirAll(collectionDBPath, 0755)
+
 	if fileAssets == "" {
 		fileAssets = "assets"
 		os.MkdirAll(fileAssets, 0755)
