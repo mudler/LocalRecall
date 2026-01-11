@@ -95,7 +95,7 @@ jobs:
             type=sha,suffix=-postgresql-{{date 'YYYYMMDDHHmmss'}}
             type=ref,event=branch,suffix=-postgresql
           flavor: |
-            latest=auto,suffix=-postgresql
+            latest=false
             prefix=
             suffix=-postgresql
 
