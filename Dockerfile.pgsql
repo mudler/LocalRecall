@@ -22,7 +22,22 @@ RUN apt-get update && \
         postgresql-common \
         jq \
         build-essential \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
+
+# Create postgres user with specific UID/GID (999:999) for Kubernetes compatibility
+# This must be done before installing PostgreSQL packages
+# In Kubernetes, set fsGroup: 999 in securityContext to automatically fix volume permissions
+RUN if ! getent group postgres > /dev/null 2>&1; then \
+        groupadd -r postgres --gid=999; \
+    else \
+        groupmod -g 999 postgres 2>/dev/null || true; \
+    fi && \
+    if ! getent passwd postgres > /dev/null 2>&1; then \
+        useradd -r -g postgres --uid=999 --home-dir=/var/lib/postgresql --shell=/bin/bash postgres; \
+    else \
+        usermod -u 999 -g postgres postgres 2>/dev/null || true; \
+    fi
 
 # Add the PostgreSQL 18 repository
 RUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
