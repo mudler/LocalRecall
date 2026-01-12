@@ -46,14 +46,13 @@ function appRouter() {
     
     fetchCollections() {
       return fetch('/api/collections')
-        .then(response => {
-          if (!response.ok) throw new Error('Failed to fetch collections');
-          return response.json();
-        })
+        .then(response => handleAPIResponse(response))
         .then(data => {
-          if (Array.isArray(data)) {
-            this.collections = data;
-            return data;
+          // Extract collections from the data field
+          const collectionsList = data.data?.collections || [];
+          if (Array.isArray(collectionsList)) {
+            this.collections = collectionsList;
+            return collectionsList;
           } else {
             this.collections = [];
             console.error('collections data:', data);
@@ -62,7 +61,7 @@ function appRouter() {
         })
         .catch(error => {
           console.error('Error fetching collections:', error);
-          this.showToast('error', 'Failed to fetch collections');
+          this.showToast('error', error.message || 'Failed to fetch collections');
           return [];
         });
     },
@@ -104,6 +103,20 @@ function getRouter() {
   return routerElement ? Alpine.$data(routerElement) : null;
 }
 
+// Utility function to handle API responses consistently
+function handleAPIResponse(response) {
+  return response.json().then(data => {
+    if (!response.ok || (data.success === false)) {
+      // Extract error details
+      const error = new Error(data.error?.message || 'Operation failed');
+      error.code = data.error?.code;
+      error.details = data.error?.details;
+      throw error;
+    }
+    return data;
+  });
+}
+
 // Search Page Component
 function searchPage() {
   return {
@@ -118,6 +131,7 @@ function searchPage() {
     },
     
     get collections() {
+      
       const router = getRouter();
       return router ? router.collections : [];
     },
@@ -145,25 +159,14 @@ function searchPage() {
           max_results: maxResultsVal 
         })
       })
-        .then(response => {
-          if (!response.ok) {
-            return response.text().then(text => {
-              try {
-                const data = JSON.parse(text);
-                throw new Error(data.error || data.message || 'Search failed with status: ' + response.status);
-              } catch (e) {
-                throw new Error(text || 'Search failed with status: ' + response.status);
-              }
-            });
-          }
-          return response.json();
-        })
+        .then(response => handleAPIResponse(response))
         .then(data => {
-          if (data.length === 0) {
+          const results = data.data?.results || [];
+          if (results.length === 0) {
             this.searchResults = ['No results found for query: "' + this.searchQuery + '"'];
             return;
           }
-          this.searchResults = data.map(item => JSON.stringify(item, null, 2));
+          this.searchResults = results.map(item => JSON.stringify(item, null, 2));
         })
         .catch(error => {
           console.error('Error searching collection:', error);
@@ -176,6 +179,7 @@ function searchPage() {
     },
     
     showToast(type, message) {
+      
       const router = getRouter();
       if (router) router.showToast(type, message);
     }
@@ -193,6 +197,7 @@ function collectionsPage() {
     },
     
     get collections() {
+      
       const router = getRouter();
       return router ? router.collections : [];
     },
@@ -204,23 +209,21 @@ function collectionsPage() {
       }
       
       this.loading.create = true;
+      
       fetch('/api/collections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: this.newCollectionName })
       })
-        .then(response => {
-          if (!response.ok) throw new Error('Failed to create collection');
-          return response.json();
-        })
-        .then(() => {
-          this.showToast('success', `Collection "${this.newCollectionName}" created successfully`);
+        .then(response => handleAPIResponse(response))
+        .then(data => {
+          this.showToast('success', data.message || `Collection "${this.newCollectionName}" created successfully`);
           this.newCollectionName = '';
           this.fetchCollections();
         })
         .catch(error => {
           console.error('Error creating collection:', error);
-          this.showToast('error', 'Failed to create collection');
+          this.showToast('error', error.message || 'Failed to create collection');
         })
         .finally(() => {
           this.loading.create = false;
@@ -262,18 +265,19 @@ function collectionsPage() {
     resetCollection(collectionName) {
       this.loading.reset = collectionName;
       
+      
       fetch(`/api/collections/${collectionName}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
-        .then(response => {
-          if (!response.ok) throw new Error('Reset failed');
-          this.showToast('success', `Collection "${collectionName}" has been reset successfully`);
+        .then(response => handleAPIResponse(response))
+        .then(data => {
+          this.showToast('success', data.message || `Collection "${collectionName}" has been reset successfully`);
           this.fetchCollections();
         })
         .catch(error => {
           console.error('Error resetting collection:', error);
-          this.showToast('error', `Failed to reset collection: ${error.message}`);
+          this.showToast('error', error.message || `Failed to reset collection`);
         })
         .finally(() => {
           this.loading.reset = false;
@@ -281,6 +285,7 @@ function collectionsPage() {
     },
     
     showToast(type, message) {
+      
       const router = getRouter();
       if (router) router.showToast(type, message);
     },
@@ -301,6 +306,7 @@ function uploadPage() {
     },
     
     get collections() {
+      
       const router = getRouter();
       return router ? router.collections : [];
     },
@@ -320,19 +326,20 @@ function uploadPage() {
       formData.append('file', fileInput.files[0]);
       
       this.loading.upload = true;
+      
       fetch(`/api/collections/${this.selectedCollection}/upload`, {
         method: 'POST',
         body: formData
       })
-        .then(response => {
-          if (!response.ok) throw new Error('Upload failed');
-          this.showToast('success', 'File uploaded successfully');
+        .then(response => handleAPIResponse(response))
+        .then(data => {
+          this.showToast('success', data.message || 'File uploaded successfully');
           fileInput.value = '';
           this.fileName = '';
         })
         .catch(error => {
           console.error('Error uploading file:', error);
-          this.showToast('error', 'Failed to upload file');
+          this.showToast('error', error.message || 'Failed to upload file');
         })
         .finally(() => {
           this.loading.upload = false;
@@ -340,6 +347,7 @@ function uploadPage() {
     },
     
     showToast(type, message) {
+      
       const router = getRouter();
       if (router) router.showToast(type, message);
     }
@@ -360,6 +368,7 @@ function sourcesPage() {
     },
     
     get collections() {
+      
       const router = getRouter();
       return router ? router.collections : [];
     },
@@ -370,17 +379,15 @@ function sourcesPage() {
       this.loading.sources = true;
       this.sources = [];
       
+      
       fetch(`/api/collections/${this.selectedSourceCollection}/sources`)
-        .then(response => {
-          if (!response.ok) throw new Error('Failed to list sources');
-          return response.json();
-        })
+        .then(response => handleAPIResponse(response))
         .then(data => {
-          this.sources = data;
+          this.sources = data.data?.sources || [];
         })
         .catch(error => {
           console.error('Error listing sources:', error);
-          this.showToast('error', 'Failed to fetch sources');
+          this.showToast('error', error.message || 'Failed to fetch sources');
         })
         .finally(() => {
           this.loading.sources = false;
@@ -404,6 +411,7 @@ function sourcesPage() {
       }
       
       this.loading.addSource = true;
+      
       fetch(`/api/collections/${this.selectedSourceCollection}/sources`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -412,19 +420,16 @@ function sourcesPage() {
           update_interval: interval
         })
       })
-        .then(response => {
-          if (!response.ok) throw new Error('Failed to add source');
-          return response.json();
-        })
-        .then(() => {
-          this.showToast('success', 'Source added successfully');
+        .then(response => handleAPIResponse(response))
+        .then(data => {
+          this.showToast('success', data.message || 'Source added successfully');
           this.newSourceURL = '';
           this.newSourceInterval = 60;
           this.listSources();
         })
         .catch(error => {
           console.error('Error adding source:', error);
-          this.showToast('error', 'Failed to add source');
+          this.showToast('error', error.message || 'Failed to add source');
         })
         .finally(() => {
           this.loading.addSource = false;
@@ -438,22 +443,20 @@ function sourcesPage() {
       }
       
       this.loading.removeSource = url;
+      
       fetch(`/api/collections/${this.selectedSourceCollection}/sources`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url })
       })
-        .then(response => {
-          if (!response.ok) throw new Error('Failed to remove source');
-          return response.json();
-        })
-        .then(() => {
-          this.showToast('success', 'Source removed successfully');
+        .then(response => handleAPIResponse(response))
+        .then(data => {
+          this.showToast('success', data.message || 'Source removed successfully');
           this.listSources();
         })
         .catch(error => {
           console.error('Error removing source:', error);
-          this.showToast('error', 'Failed to remove source');
+          this.showToast('error', error.message || 'Failed to remove source');
         })
         .finally(() => {
           this.loading.removeSource = false;
@@ -461,6 +464,7 @@ function sourcesPage() {
     },
     
     showToast(type, message) {
+      
       const router = getRouter();
       if (router) router.showToast(type, message);
     }
@@ -479,6 +483,7 @@ function entriesPage() {
     },
     
     get collections() {
+      
       const router = getRouter();
       return router ? router.collections : [];
     },
@@ -488,17 +493,15 @@ function entriesPage() {
       
       this.loading.entries = true;
       this.entries = [];
+      
       fetch(`/api/collections/${this.selectedListCollection}/entries`)
-        .then(response => {
-          if (!response.ok) throw new Error('Failed to list entries');
-          return response.json();
-        })
+        .then(response => handleAPIResponse(response))
         .then(data => {
-          this.entries = data;
+          this.entries = data.data?.entries || [];
         })
         .catch(error => {
           console.error('Error listing entries:', error);
-          this.showToast('error', 'Failed to fetch entries');
+          this.showToast('error', error.message || 'Failed to fetch entries');
         })
         .finally(() => {
           this.loading.entries = false;
@@ -512,19 +515,20 @@ function entriesPage() {
       }
       
       this.loading.delete = entry;
+      
       fetch(`/api/collections/${this.selectedListCollection}/entry/delete`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry: entry })
       })
-        .then(response => {
-          if (!response.ok) throw new Error('Deletion failed');
-          this.showToast('success', 'Entry deleted successfully');
+        .then(response => handleAPIResponse(response))
+        .then(data => {
+          this.showToast('success', data.message || 'Entry deleted successfully');
           this.listEntries();
         })
         .catch(error => {
           console.error('Error deleting entry:', error);
-          this.showToast('error', 'Failed to delete entry');
+          this.showToast('error', error.message || 'Failed to delete entry');
         })
         .finally(() => {
           this.loading.delete = false;
@@ -556,20 +560,21 @@ function entriesPage() {
     resetCollection(collectionName) {
       this.loading.reset = collectionName;
       
+      
       fetch(`/api/collections/${collectionName}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
-        .then(response => {
-          if (!response.ok) throw new Error('Reset failed');
-          this.showToast('success', `Collection "${collectionName}" has been reset successfully`);
+        .then(response => handleAPIResponse(response))
+        .then(data => {
+          this.showToast('success', data.message || `Collection "${collectionName}" has been reset successfully`);
           if (collectionName === this.selectedListCollection) {
             this.listEntries();
           }
         })
         .catch(error => {
           console.error('Error resetting collection:', error);
-          this.showToast('error', `Failed to reset collection: ${error.message}`);
+          this.showToast('error', error.message || `Failed to reset collection`);
         })
         .finally(() => {
           this.loading.reset = false;
@@ -577,6 +582,7 @@ function entriesPage() {
     },
     
     showToast(type, message) {
+      
       const router = getRouter();
       if (router) router.showToast(type, message);
     }
