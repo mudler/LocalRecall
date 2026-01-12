@@ -6,20 +6,6 @@ function appRouter() {
     mobileMenuOpen: false,
     collections: [],
     
-    // Utility function to handle API responses consistently
-    handleAPIResponse(response) {
-      return response.json().then(data => {
-        if (!response.ok || (data.success === false)) {
-          // Extract error details
-          const error = new Error(data.error?.message || 'Operation failed');
-          error.code = data.error?.code;
-          error.details = data.error?.details;
-          throw error;
-        }
-        return data;
-      });
-    },
-    
     navigate(page) {
       this.currentPage = page;
       // Update URL hash for bookmarkable pages
@@ -60,7 +46,7 @@ function appRouter() {
     
     fetchCollections() {
       return fetch('/api/collections')
-        .then(response => this.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           // Extract collections from the data field
           const collectionsList = data.data?.collections || [];
