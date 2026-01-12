@@ -127,10 +127,10 @@ func getTestEmbedding(client *openai.Client, model string) ([]float32, error) {
 func (p *PostgresDB) setupDatabase() error {
 	ctx := context.Background()
 
-	// Enable extensions
+	// Enable extensions - pg_textsearch is required for BM25 indexing
 	_, err := p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pg_textsearch")
 	if err != nil {
-		xlog.Warn("Failed to enable pg_textsearch extension", "error", err)
+		return fmt.Errorf("failed to enable pg_textsearch extension (required for BM25 indexing): %w", err)
 	}
 
 	// Check if vectorscale extension is already installed
@@ -151,7 +151,7 @@ func (p *PostgresDB) setupDatabase() error {
 				// Try pgvector as fallback
 				_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
 				if err != nil {
-					xlog.Warn("Failed to enable vector extension", "error", err)
+					return fmt.Errorf("failed to enable vector extension: %w", err)
 				}
 			} else {
 				vectorscaleInstalled = true
@@ -202,13 +202,14 @@ func (p *PostgresDB) setupDatabase() error {
 		xlog.Warn("Failed to create GIN index", "error", err)
 	}
 
-	// BM25 index
+	// BM25 index - required for hybrid search
+	indexName := fmt.Sprintf("idx_%s_bm25", p.tableName)
 	_, err = p.pool.Exec(ctx, fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_bm25 ON %s 
+		CREATE INDEX IF NOT EXISTS %s ON %s 
 		USING bm25(full_text) WITH (text_config='english')
-	`, p.tableName, p.tableName))
+	`, indexName, p.tableName))
 	if err != nil {
-		xlog.Warn("Failed to create BM25 index", "error", err)
+		return fmt.Errorf("failed to create BM25 index (required for hybrid search): %w", err)
 	}
 
 	// Vector index (try DiskANN first if vectorscale is available, fallback to HNSW)
