@@ -117,6 +117,20 @@ function getRouter() {
   return routerElement ? Alpine.$data(routerElement) : null;
 }
 
+// Utility function to handle API responses consistently
+function handleAPIResponse(response) {
+  return response.json().then(data => {
+    if (!response.ok || (data.success === false)) {
+      // Extract error details
+      const error = new Error(data.error?.message || 'Operation failed');
+      error.code = data.error?.code;
+      error.details = data.error?.details;
+      throw error;
+    }
+    return data;
+  });
+}
+
 // Search Page Component
 function searchPage() {
   return {
@@ -131,7 +145,7 @@ function searchPage() {
     },
     
     get collections() {
-      const router = getRouter();
+      
       return router ? router.collections : [];
     },
     
@@ -150,7 +164,6 @@ function searchPage() {
       const now = new Date();
       this.searchTimestamp = now.toISOString().replace('T', ' ').substring(0, 19);
       
-      const router = getRouter();
       fetch(`/api/collections/${this.selectedSearchCollection}/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -159,7 +172,7 @@ function searchPage() {
           max_results: maxResultsVal 
         })
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           const results = data.data?.results || [];
           if (results.length === 0) {
@@ -179,7 +192,7 @@ function searchPage() {
     },
     
     showToast(type, message) {
-      const router = getRouter();
+      
       if (router) router.showToast(type, message);
     }
   };
@@ -196,7 +209,7 @@ function collectionsPage() {
     },
     
     get collections() {
-      const router = getRouter();
+      
       return router ? router.collections : [];
     },
     
@@ -207,13 +220,13 @@ function collectionsPage() {
       }
       
       this.loading.create = true;
-      const router = getRouter();
+      
       fetch('/api/collections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: this.newCollectionName })
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.showToast('success', data.message || `Collection "${this.newCollectionName}" created successfully`);
           this.newCollectionName = '';
@@ -229,7 +242,7 @@ function collectionsPage() {
     },
     
     fetchCollections() {
-      const router = getRouter();
+      
       if (router) {
         this.loading.collections = true;
         router.fetchCollections().finally(() => {
@@ -263,12 +276,12 @@ function collectionsPage() {
     resetCollection(collectionName) {
       this.loading.reset = collectionName;
       
-      const router = getRouter();
+      
       fetch(`/api/collections/${collectionName}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.showToast('success', data.message || `Collection "${collectionName}" has been reset successfully`);
           this.fetchCollections();
@@ -283,7 +296,7 @@ function collectionsPage() {
     },
     
     showToast(type, message) {
-      const router = getRouter();
+      
       if (router) router.showToast(type, message);
     },
     
@@ -303,7 +316,7 @@ function uploadPage() {
     },
     
     get collections() {
-      const router = getRouter();
+      
       return router ? router.collections : [];
     },
     
@@ -322,12 +335,12 @@ function uploadPage() {
       formData.append('file', fileInput.files[0]);
       
       this.loading.upload = true;
-      const router = getRouter();
+      
       fetch(`/api/collections/${this.selectedCollection}/upload`, {
         method: 'POST',
         body: formData
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.showToast('success', data.message || 'File uploaded successfully');
           fileInput.value = '';
@@ -343,7 +356,7 @@ function uploadPage() {
     },
     
     showToast(type, message) {
-      const router = getRouter();
+      
       if (router) router.showToast(type, message);
     }
   };
@@ -363,7 +376,7 @@ function sourcesPage() {
     },
     
     get collections() {
-      const router = getRouter();
+      
       return router ? router.collections : [];
     },
     
@@ -373,9 +386,9 @@ function sourcesPage() {
       this.loading.sources = true;
       this.sources = [];
       
-      const router = getRouter();
+      
       fetch(`/api/collections/${this.selectedSourceCollection}/sources`)
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.sources = data.data?.sources || [];
         })
@@ -405,7 +418,7 @@ function sourcesPage() {
       }
       
       this.loading.addSource = true;
-      const router = getRouter();
+      
       fetch(`/api/collections/${this.selectedSourceCollection}/sources`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -414,7 +427,7 @@ function sourcesPage() {
           update_interval: interval
         })
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.showToast('success', data.message || 'Source added successfully');
           this.newSourceURL = '';
@@ -437,13 +450,13 @@ function sourcesPage() {
       }
       
       this.loading.removeSource = url;
-      const router = getRouter();
+      
       fetch(`/api/collections/${this.selectedSourceCollection}/sources`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url })
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.showToast('success', data.message || 'Source removed successfully');
           this.listSources();
@@ -458,7 +471,7 @@ function sourcesPage() {
     },
     
     showToast(type, message) {
-      const router = getRouter();
+      
       if (router) router.showToast(type, message);
     }
   };
@@ -476,7 +489,7 @@ function entriesPage() {
     },
     
     get collections() {
-      const router = getRouter();
+      
       return router ? router.collections : [];
     },
     
@@ -485,9 +498,9 @@ function entriesPage() {
       
       this.loading.entries = true;
       this.entries = [];
-      const router = getRouter();
+      
       fetch(`/api/collections/${this.selectedListCollection}/entries`)
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.entries = data.data?.entries || [];
         })
@@ -507,13 +520,13 @@ function entriesPage() {
       }
       
       this.loading.delete = entry;
-      const router = getRouter();
+      
       fetch(`/api/collections/${this.selectedListCollection}/entry/delete`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry: entry })
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.showToast('success', data.message || 'Entry deleted successfully');
           this.listEntries();
@@ -552,12 +565,12 @@ function entriesPage() {
     resetCollection(collectionName) {
       this.loading.reset = collectionName;
       
-      const router = getRouter();
+      
       fetch(`/api/collections/${collectionName}/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
-        .then(response => router.handleAPIResponse(response))
+        .then(response => handleAPIResponse(response))
         .then(data => {
           this.showToast('success', data.message || `Collection "${collectionName}" has been reset successfully`);
           if (collectionName === this.selectedListCollection) {
@@ -574,7 +587,7 @@ function entriesPage() {
     },
     
     showToast(type, message) {
-      const router = getRouter();
+      
       if (router) router.showToast(type, message);
     }
   };
