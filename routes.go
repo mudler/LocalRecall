@@ -20,6 +20,49 @@ type collectionList map[string]*rag.PersistentKB
 
 var collections = collectionList{}
 
+// APIResponse represents a standardized API response
+type APIResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   *APIError   `json:"error,omitempty"`
+}
+
+// APIError represents a detailed error response
+type APIError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+// Error codes
+const (
+	ErrCodeNotFound       = "NOT_FOUND"
+	ErrCodeInvalidRequest = "INVALID_REQUEST"
+	ErrCodeInternalError  = "INTERNAL_ERROR"
+	ErrCodeUnauthorized   = "UNAUTHORIZED"
+	ErrCodeConflict       = "CONFLICT"
+)
+
+func successResponse(message string, data interface{}) APIResponse {
+	return APIResponse{
+		Success: true,
+		Message: message,
+		Data:    data,
+	}
+}
+
+func errorResponse(code string, message string, details string) APIResponse {
+	return APIResponse{
+		Success: false,
+		Error: &APIError{
+			Code:    code,
+			Message: message,
+			Details: details,
+		},
+	}
+}
+
 func newVectorEngine(
 	vectorEngineType string,
 	llmClient *openai.Client,
@@ -73,7 +116,7 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 					}
 				}
 
-				return c.JSON(http.StatusUnauthorized, errorMessage("Unauthorized"))
+				return c.JSON(http.StatusUnauthorized, errorResponse(ErrCodeUnauthorized, "Unauthorized", "Invalid or missing API key"))
 			}
 		})
 	}
@@ -99,7 +142,7 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid request", err.Error()))
 		}
 
 		collection := newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel, maxChunkingSize)
@@ -108,7 +151,11 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 		// Register the new collection with the source manager
 		sourceManager.RegisterCollection(r.Name, collection)
 
-		return c.JSON(http.StatusCreated, collection)
+		response := successResponse("Collection created successfully", map[string]interface{}{
+			"name":       r.Name,
+			"created_at": time.Now().Format(time.RFC3339),
+		})
+		return c.JSON(http.StatusCreated, response)
 	}
 }
 
@@ -117,7 +164,7 @@ func deleteEntryFromCollection(collections collectionList) func(c echo.Context) 
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
 		type request struct {
@@ -126,14 +173,20 @@ func deleteEntryFromCollection(collections collectionList) func(c echo.Context) 
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid request", err.Error()))
 		}
 
 		if err := collection.RemoveEntry(r.Entry); err != nil {
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to remove entry: "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to remove entry", err.Error()))
 		}
 
-		return c.JSON(http.StatusOK, collection.ListDocuments())
+		remainingEntries := collection.ListDocuments()
+		response := successResponse("Entry deleted successfully", map[string]interface{}{
+			"deleted_entry":    r.Entry,
+			"remaining_entries": remainingEntries,
+			"entry_count":      len(remainingEntries),
+		})
+		return c.JSON(http.StatusOK, response)
 	}
 }
 
@@ -142,16 +195,20 @@ func reset(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
 		if err := collection.Reset(); err != nil {
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to reset collection: "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to reset collection", err.Error()))
 		}
 
 		delete(collections, name)
 
-		return nil
+		response := successResponse("Collection reset successfully", map[string]interface{}{
+			"collection": name,
+			"reset_at":   time.Now().Format(time.RFC3339),
+		})
+		return c.JSON(http.StatusOK, response)
 	}
 }
 
@@ -160,7 +217,7 @@ func search(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
 		type request struct {
@@ -170,10 +227,8 @@ func search(collections collectionList) func(c echo.Context) error {
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid request", err.Error()))
 		}
-
-		fmt.Println(r)
 
 		if r.MaxResults == 0 {
 			if len(collection.ListDocuments()) >= 5 {
@@ -185,10 +240,16 @@ func search(collections collectionList) func(c echo.Context) error {
 
 		results, err := collection.Search(r.Query, r.MaxResults)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to search collection: "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to search collection", err.Error()))
 		}
 
-		return c.JSON(http.StatusOK, results)
+		response := successResponse("Search completed successfully", map[string]interface{}{
+			"query":       r.Query,
+			"max_results": r.MaxResults,
+			"results":     results,
+			"count":       len(results),
+		})
+		return c.JSON(http.StatusOK, response)
 	}
 }
 
@@ -201,10 +262,16 @@ func listFiles(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
-		return c.JSON(http.StatusOK, collection.ListDocuments())
+		entries := collection.ListDocuments()
+		response := successResponse("Entries retrieved successfully", map[string]interface{}{
+			"collection": name,
+			"entries":    entries,
+			"count":      len(entries),
+		})
+		return c.JSON(http.StatusOK, response)
 	}
 }
 
@@ -215,19 +282,19 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		collection, exists := collections[name]
 		if !exists {
 			xlog.Error("Collection not found")
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
 		file, err := c.FormFile("file")
 		if err != nil {
 			xlog.Error("Failed to read file", err)
-			return c.JSON(http.StatusBadRequest, errorMessage("Failed to read file: "+err.Error()))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Failed to read file", err.Error()))
 		}
 
 		f, err := file.Open()
 		if err != nil {
 			xlog.Error("Failed to open file", err)
-			return c.JSON(http.StatusBadRequest, errorMessage("Failed to open file: "+err.Error()))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Failed to open file", err.Error()))
 		}
 		defer f.Close()
 
@@ -235,35 +302,45 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		out, err := os.Create(filePath)
 		if err != nil {
 			xlog.Error("Failed to create file", err)
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to create file "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to create file", err.Error()))
 		}
 		defer out.Close()
 
 		_, err = io.Copy(out, f)
 		if err != nil {
 			xlog.Error("Failed to copy file", err)
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to copy file: "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to copy file", err.Error()))
 		}
 
 		if collection.EntryExists(file.Filename) {
 			xlog.Info("Entry already exists")
-			return c.JSON(http.StatusBadRequest, errorMessage("Entry already exists"))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeConflict, "Entry already exists", fmt.Sprintf("File '%s' has already been uploaded to collection '%s'", file.Filename, name)))
 		}
 
 		// Save the file to disk
 		err = collection.Store(filePath, map[string]string{})
 		if err != nil {
 			xlog.Error("Failed to store file", err)
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to store file: "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to store file", err.Error()))
 		}
 
-		return c.JSON(http.StatusOK, collection)
+		response := successResponse("File uploaded successfully", map[string]interface{}{
+			"filename":   file.Filename,
+			"collection": name,
+			"uploaded_at": time.Now().Format(time.RFC3339),
+		})
+		return c.JSON(http.StatusOK, response)
 	}
 }
 
 // listCollections returns all collections
 func listCollections(c echo.Context) error {
-	return c.JSON(http.StatusOK, rag.ListAllCollections(collectionDBPath))
+	collectionsList := rag.ListAllCollections(collectionDBPath)
+	response := successResponse("Collections retrieved successfully", map[string]interface{}{
+		"collections": collectionsList,
+		"count":       len(collectionsList),
+	})
+	return c.JSON(http.StatusOK, response)
 }
 
 // registerExternalSource handles registering an external source for a collection
@@ -272,7 +349,7 @@ func registerExternalSource(collections collectionList) func(c echo.Context) err
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
 		type request struct {
@@ -282,7 +359,7 @@ func registerExternalSource(collections collectionList) func(c echo.Context) err
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid request", err.Error()))
 		}
 
 		if r.UpdateInterval < 1 {
@@ -294,10 +371,15 @@ func registerExternalSource(collections collectionList) func(c echo.Context) err
 
 		// Add the source to the manager
 		if err := sourceManager.AddSource(name, r.URL, time.Duration(r.UpdateInterval)*time.Minute); err != nil {
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to register source: "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to register source", err.Error()))
 		}
 
-		return c.JSON(http.StatusOK, map[string]string{"message": "External source registered successfully"})
+		response := successResponse("External source registered successfully", map[string]interface{}{
+			"collection":      name,
+			"url":             r.URL,
+			"update_interval": r.UpdateInterval,
+		})
+		return c.JSON(http.StatusOK, response)
 	}
 }
 
@@ -312,14 +394,18 @@ func removeExternalSource(collections collectionList) func(c echo.Context) error
 
 		r := new(request)
 		if err := c.Bind(r); err != nil {
-			return c.JSON(http.StatusBadRequest, errorMessage("Invalid request"))
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid request", err.Error()))
 		}
 
 		if err := sourceManager.RemoveSource(name, r.URL); err != nil {
-			return c.JSON(http.StatusInternalServerError, errorMessage("Failed to remove source: "+err.Error()))
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to remove source", err.Error()))
 		}
 
-		return c.JSON(http.StatusOK, map[string]string{"message": "External source removed successfully"})
+		response := successResponse("External source removed successfully", map[string]interface{}{
+			"collection": name,
+			"url":        r.URL,
+		})
+		return c.JSON(http.StatusOK, response)
 	}
 }
 
@@ -329,22 +415,27 @@ func listSources(collections collectionList) func(c echo.Context) error {
 		name := c.Param("name")
 		collection, exists := collections[name]
 		if !exists {
-			return c.JSON(http.StatusNotFound, errorMessage("Collection not found"))
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
 		// Get sources from the collection
 		sources := collection.GetExternalSources()
 
 		// Convert sources to a more frontend-friendly format
-		response := []map[string]interface{}{}
+		sourcesList := []map[string]interface{}{}
 		for _, source := range sources {
-			response = append(response, map[string]interface{}{
+			sourcesList = append(sourcesList, map[string]interface{}{
 				"url":             source.URL,
 				"update_interval": int(source.UpdateInterval.Minutes()),
 				"last_update":     source.LastUpdate.Format(time.RFC3339),
 			})
 		}
 
+		response := successResponse("Sources retrieved successfully", map[string]interface{}{
+			"collection": name,
+			"sources":    sourcesList,
+			"count":      len(sourcesList),
+		})
 		return c.JSON(http.StatusOK, response)
 	}
 }
