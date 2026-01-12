@@ -132,6 +132,7 @@ function searchPage() {
     
     get collections() {
       
+      const router = getRouter();
       return router ? router.collections : [];
     },
     
@@ -197,6 +198,7 @@ function collectionsPage() {
     
     get collections() {
       
+      const router = getRouter();
       return router ? router.collections : [];
     },
     
@@ -305,6 +307,7 @@ function uploadPage() {
     
     get collections() {
       
+      const router = getRouter();
       return router ? router.collections : [];
     },
     
@@ -366,6 +369,7 @@ function sourcesPage() {
     
     get collections() {
       
+      const router = getRouter();
       return router ? router.collections : [];
     },
     
@@ -480,6 +484,7 @@ function entriesPage() {
     
     get collections() {
       
+      const router = getRouter();
       return router ? router.collections : [];
     },
     
