@@ -7,12 +7,13 @@ services:
       - MODELS_PATH=/models
       - BACKENDS_PATH=/backends
     volumes:
-      - ./volumes/models:/models:cached
-      - ./volumes/backends:/backends:cached
-      - ./volumes/images/:/tmp/generated/images/
+      - models:/models:cached
+      - backends:/backends:cached
+      - images:/tmp/generated/images/
     command:
       - granite-embedding-107m-multilingual
-  postgres:   
+  postgres:
+    #image: quay.io/mudler/localrecall:v0.5.2-postgresql
     build:
       context: .
       dockerfile: Dockerfile.pgsql
@@ -23,14 +24,14 @@ services:
       - POSTGRES_USER=localrecall
       - POSTGRES_PASSWORD=localrecall
     volumes:
-      - ./volumes/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U localrecall"]
       interval: 10s
       timeout: 5s
       retries: 5
   ragserver:
-    image: quay.io/mudler/localrecall
+    #image: quay.io/mudler/localrecall:v0.5.2
     build:
       context: .
       dockerfile: Dockerfile
@@ -48,8 +49,16 @@ services:
       - HYBRID_SEARCH_BM25_WEIGHT=0.5
       - HYBRID_SEARCH_VECTOR_WEIGHT=0.5
     volumes:
-      - ./volumes/db:/db
-      - ./volumes/assets/:/assets
+      - db:/db
+      - assets:/assets
     depends_on:
       postgres:
         condition: service_healthy
+
+volumes:
+  models:
+  backends:
+  images:
+  postgres_data:
+  db:
+  assets:
