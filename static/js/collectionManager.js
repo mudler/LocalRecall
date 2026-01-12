@@ -231,7 +231,7 @@ function collectionsPage() {
     },
     
     fetchCollections() {
-      
+      const router = getRouter();
       if (router) {
         this.loading.collections = true;
         router.fetchCollections().finally(() => {
