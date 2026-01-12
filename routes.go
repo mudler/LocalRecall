@@ -253,10 +253,6 @@ func search(collections collectionList) func(c echo.Context) error {
 	}
 }
 
-func errorMessage(message string) map[string]string {
-	return map[string]string{"error": message}
-}
-
 func listFiles(collections collectionList) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		name := c.Param("name")
