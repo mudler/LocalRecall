@@ -179,7 +179,7 @@ function searchPage() {
     
     showToast(type, message) {
       
-      if (router) router.showToast(type, message);
+      const router = getRouter(); if (router) router.showToast(type, message);
     }
   };
 }
@@ -283,7 +283,7 @@ function collectionsPage() {
     
     showToast(type, message) {
       
-      if (router) router.showToast(type, message);
+      const router = getRouter(); if (router) router.showToast(type, message);
     },
     
     init() {
@@ -343,7 +343,7 @@ function uploadPage() {
     
     showToast(type, message) {
       
-      if (router) router.showToast(type, message);
+      const router = getRouter(); if (router) router.showToast(type, message);
     }
   };
 }
@@ -458,7 +458,7 @@ function sourcesPage() {
     
     showToast(type, message) {
       
-      if (router) router.showToast(type, message);
+      const router = getRouter(); if (router) router.showToast(type, message);
     }
   };
 }
@@ -574,7 +574,7 @@ function entriesPage() {
     
     showToast(type, message) {
       
-      if (router) router.showToast(type, message);
+      const router = getRouter(); if (router) router.showToast(type, message);
     }
   };
 }
