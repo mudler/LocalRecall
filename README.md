@@ -301,6 +301,34 @@ External sources are automatically monitored and updated in the background. The 
 
 ---
 
+## 🔌 Model Context Protocol (MCP) Integration
+
+LocalRecall can be controlled via MCP (Model Context Protocol) through the [LocalRecall MCP Server](https://github.com/mudler/mcps/tree/master/localrecall) available in the [mcps repository](https://github.com/mudler/mcps).
+
+The MCP server provides tools for:
+- 🔍 **Search**: Search content in collections
+- ➕ **Create Collection**: Create new collections
+- 🔄 **Reset Collection**: Clear collections
+- 📄 **Add Document**: Upload documents to collections
+- 📋 **List Collections**: List all available collections
+- 📁 **List Files**: List files in a collection
+- 🗑️ **Delete Entry**: Remove entries from collections
+
+### Quick Start with MCP
+
+The MCP server can be configured to enable specific tools for security and flexibility:
+
+```bash
+docker run -e LOCALRECALL_URL=http://localhost:8080 \
+           -e LOCALRECALL_API_KEY=your-api-key \
+           -e LOCALRECALL_ENABLED_TOOLS="search,list_collections,add_document" \
+           ghcr.io/mudler/mcps/localrecall:latest
+```
+
+For more information and configuration options, see the [LocalRecall MCP Server documentation](https://github.com/mudler/mcps#-localrecall-server).
+
+---
+
 ## 📝 License
 
 Released under the [MIT License](LICENSE).
