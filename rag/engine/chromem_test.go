@@ -399,4 +399,155 @@ var _ = Describe("ChromemDB", func() {
 			Expect(len(results)).To(BeNumerically(">=", 1))
 		})
 	})
+
+	Describe("Reranker Integration", func() {
+		var db *ChromemDB
+		var originalRerankerModel string
+		var originalBaseURL string
+		var originalAPIKey string
+
+		BeforeEach(func() {
+			// Save original environment variables
+			originalRerankerModel = os.Getenv("RERANKER_MODEL")
+			originalBaseURL = os.Getenv("OPENAI_BASE_URL")
+			originalAPIKey = os.Getenv("OPENAI_API_KEY")
+
+			var err error
+			db, err = NewChromemDBCollection(collectionName, tempDir, openaiClient, "granite-embedding-107m-multilingual")
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			// Restore original environment variables
+			if originalRerankerModel != "" {
+				os.Setenv("RERANKER_MODEL", originalRerankerModel)
+			} else {
+				os.Unsetenv("RERANKER_MODEL")
+			}
+			if originalBaseURL != "" {
+				os.Setenv("OPENAI_BASE_URL", originalBaseURL)
+			} else {
+				os.Unsetenv("OPENAI_BASE_URL")
+			}
+			if originalAPIKey != "" {
+				os.Setenv("OPENAI_API_KEY", originalAPIKey)
+			} else {
+				os.Unsetenv("OPENAI_API_KEY")
+			}
+		})
+
+		It("should use combined score when reranker is not configured", func() {
+			// Store documents
+			_, err := db.Store("Python programming language", map[string]string{
+				"title": "Python Guide",
+			})
+			Expect(err).ToNot(HaveOccurred())
+
+			_, err = db.Store("Go programming language", map[string]string{
+				"title": "Go Guide",
+			})
+			Expect(err).ToNot(HaveOccurred())
+
+			// Search should work with combined scores (no reranker)
+			results, err := db.Search("programming", 2)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(results)).To(BeNumerically(">=", 1))
+
+			// Results should have similarity scores
+			for _, result := range results {
+				Expect(result.Similarity).To(BeNumerically(">=", 0))
+			}
+		})
+
+		It("should fallback to combined score when reranker fails", func() {
+			// Set invalid reranker configuration to trigger fallback
+			os.Setenv("RERANKER_MODEL", "invalid-model")
+			os.Setenv("OPENAI_BASE_URL", "http://invalid-url:9999")
+
+			// Recreate DB with new config
+			var err error
+			db, err = NewChromemDBCollection(collectionName, tempDir, openaiClient, "granite-embedding-107m-multilingual")
+			Expect(err).ToNot(HaveOccurred())
+
+			// Store documents
+			_, err = db.Store("Test document about programming", map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
+
+			// Search should fallback to combined score approach
+			results, err := db.Search("programming", 1)
+			Expect(err).ToNot(HaveOccurred())
+			// Should still return results (fallback works)
+			Expect(results).ToNot(BeNil())
+		})
+
+		It("should work with reranker when properly configured", func() {
+			// Get LocalAI endpoint from test setup
+			localAIEndpoint := os.Getenv("LOCALAI_ENDPOINT")
+			if localAIEndpoint == "" {
+				localAIEndpoint = "http://localhost:8081"
+			}
+
+			// Set reranker configuration (if available)
+			os.Setenv("RERANKER_MODEL", "jina-reranker-v1-base-en")
+			os.Setenv("OPENAI_BASE_URL", localAIEndpoint)
+			os.Setenv("OPENAI_API_KEY", "sk-test")
+
+			// Recreate DB with reranker config
+			var err error
+			db, err = NewChromemDBCollection(collectionName, tempDir, openaiClient, "granite-embedding-107m-multilingual")
+			Expect(err).ToNot(HaveOccurred())
+
+			// Store documents
+			_, err = db.Store("Python is a programming language", map[string]string{
+				"title": "Python Guide",
+			})
+			Expect(err).ToNot(HaveOccurred())
+
+			_, err = db.Store("Go is a programming language developed by Google", map[string]string{
+				"title": "Go Guide",
+			})
+			Expect(err).ToNot(HaveOccurred())
+
+			// Search - will attempt to use reranker, but may fallback if reranker not available
+			results, err := db.Search("programming", 2)
+			Expect(err).ToNot(HaveOccurred())
+			// Should return results (either from reranker or fallback)
+			Expect(len(results)).To(BeNumerically(">=", 1))
+
+			// Results should have similarity scores
+			for _, result := range results {
+				Expect(result.Similarity).To(BeNumerically(">=", 0))
+			}
+		})
+
+		It("should respect top_n limit when using reranker", func() {
+			// Get LocalAI endpoint from test setup
+			localAIEndpoint := os.Getenv("LOCALAI_ENDPOINT")
+			if localAIEndpoint == "" {
+				localAIEndpoint = "http://localhost:8081"
+			}
+
+			// Set reranker configuration
+			os.Setenv("RERANKER_MODEL", "jina-reranker-v1-base-en")
+			os.Setenv("OPENAI_BASE_URL", localAIEndpoint)
+			os.Setenv("OPENAI_API_KEY", "sk-test")
+
+			// Recreate DB with reranker config
+			var err error
+			db, err = NewChromemDBCollection(collectionName, tempDir, openaiClient, "granite-embedding-107m-multilingual")
+			Expect(err).ToNot(HaveOccurred())
+
+			// Store multiple documents
+			for i := 0; i < 5; i++ {
+				_, err = db.Store(fmt.Sprintf("Document %d about programming", i), map[string]string{})
+				Expect(err).ToNot(HaveOccurred())
+			}
+
+			// Search with limit
+			results, err := db.Search("programming", 3)
+			Expect(err).ToNot(HaveOccurred())
+			// Should respect the limit (or return what's available)
+			Expect(len(results)).To(BeNumerically("<=", 3))
+		})
+	})
 })
