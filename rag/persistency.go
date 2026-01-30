@@ -208,6 +208,29 @@ func (db *PersistentKB) EntryExists(entry string) bool {
 	return false
 }
 
+// GetEntryContent returns all chunks (content, id, metadata) for the given entry.
+// It uses the in-memory index and Engine.GetByID to resolve full chunk data.
+func (db *PersistentKB) GetEntryContent(entry string) ([]types.Result, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	entry = filepath.Base(entry)
+	chunkResults, ok := db.index[entry]
+	if !ok {
+		return nil, fmt.Errorf("entry not found: %s", entry)
+	}
+
+	results := make([]types.Result, 0, len(chunkResults))
+	for _, r := range chunkResults {
+		full, err := db.Engine.GetByID(r.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get chunk %s: %w", r.ID, err)
+		}
+		results = append(results, full)
+	}
+	return results, nil
+}
+
 // Store stores an entry in the persistent knowledge base.
 func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 	db.Lock()

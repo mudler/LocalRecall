@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/mudler/localrecall/rag/types"
@@ -74,7 +75,7 @@ func (c *Client) ListCollections() ([]string, error) {
 	return collections, nil
 }
 
-// ListCollections lists all collections
+// ListEntries lists all entries in a collection
 func (c *Client) ListEntries(collection string) ([]string, error) {
 	url := fmt.Sprintf("%s/api/collections/%s/entries", c.BaseURL, collection)
 
@@ -85,16 +86,61 @@ func (c *Client) ListEntries(collection string) ([]string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New("failed to list collections")
+		return nil, errors.New("failed to list entries")
 	}
 
-	var entries []string
-	err = json.NewDecoder(resp.Body).Decode(&entries)
+	var result struct {
+		Data struct {
+			Entries []string `json:"entries"`
+		} `json:"data"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&result)
 	if err != nil {
 		return nil, err
 	}
 
-	return entries, nil
+	return result.Data.Entries, nil
+}
+
+// EntryChunk is a single chunk of an entry's content (id, content, metadata only).
+type EntryChunk struct {
+	ID       string            `json:"id"`
+	Content  string            `json:"content"`
+	Metadata map[string]string `json:"metadata"`
+}
+
+// GetEntryContent returns the chunks (id, content, metadata) for a specific entry in a collection.
+func (c *Client) GetEntryContent(collection, entry string) ([]EntryChunk, error) {
+	apiURL := fmt.Sprintf("%s/api/collections/%s/entries/%s", c.BaseURL, collection, url.PathEscape(entry))
+
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		break
+	case http.StatusNotFound:
+		return nil, errors.New("collection or entry not found")
+	case http.StatusNotImplemented:
+		return nil, errors.New("this collection backend does not support listing entry content")
+	default:
+		return nil, fmt.Errorf("failed to get entry content: status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Chunks []EntryChunk `json:"chunks"`
+		} `json:"data"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.Data.Chunks, nil
 }
 
 // DeleteEntry deletes an Entry in a collection and return the entries left

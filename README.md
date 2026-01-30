@@ -246,6 +246,14 @@ curl -X GET $BASE_URL/collections
 curl -X GET $BASE_URL/collections/myCollection/entries
 ```
 
+- **Get Entry Content**:
+
+```sh
+curl -X GET $BASE_URL/collections/myCollection/entries/file.txt
+```
+
+Returns `collection`, `entry`, `chunks` (array of `id`, `content`, `metadata`), and `count`.
+
 - **Search Collection**:
 
 ```sh

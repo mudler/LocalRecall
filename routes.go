@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +126,7 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 	e.POST("/api/collections/:name/upload", uploadFile(collections, fileAssets))
 	e.GET("/api/collections", listCollections)
 	e.GET("/api/collections/:name/entries", listFiles(collections))
+	e.GET("/api/collections/:name/entries/:entry", getEntryContent(collections))
 	e.POST("/api/collections/:name/search", search(collections))
 	e.POST("/api/collections/:name/reset", reset(collections))
 	e.DELETE("/api/collections/:name/entry/delete", deleteEntryFromCollection(collections))
@@ -266,6 +268,51 @@ func listFiles(collections collectionList) func(c echo.Context) error {
 			"collection": name,
 			"entries":    entries,
 			"count":      len(entries),
+		})
+		return c.JSON(http.StatusOK, response)
+	}
+}
+
+// getEntryContent returns the chunks (id, content, metadata) for a specific entry in a collection.
+func getEntryContent(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
+		}
+
+		entryParam := c.Param("entry")
+		entry, err := url.PathUnescape(entryParam)
+		if err != nil {
+			entry = entryParam
+		}
+
+		results, err := collection.GetEntryContent(entry)
+		if err != nil {
+			if strings.Contains(err.Error(), "entry not found") {
+				return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Entry not found", fmt.Sprintf("Entry '%s' does not exist in collection '%s'", entry, name)))
+			}
+			if strings.Contains(err.Error(), "not implemented") {
+				return c.JSON(http.StatusNotImplemented, errorResponse(ErrCodeInternalError, "Not supported", "This collection backend does not support listing entry content"))
+			}
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to get entry content", err.Error()))
+		}
+
+		chunks := make([]map[string]interface{}, 0, len(results))
+		for _, r := range results {
+			chunks = append(chunks, map[string]interface{}{
+				"id":       r.ID,
+				"content":  r.Content,
+				"metadata": r.Metadata,
+			})
+		}
+
+		response := successResponse("Entry content retrieved successfully", map[string]interface{}{
+			"collection": name,
+			"entry":      entry,
+			"chunks":     chunks,
+			"count":      len(chunks),
 		})
 		return c.JSON(http.StatusOK, response)
 	}
