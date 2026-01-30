@@ -103,6 +103,14 @@ function getRouter() {
   return routerElement ? Alpine.$data(routerElement) : null;
 }
 
+// Escape HTML for safe display in modals
+function escapeHtml(text) {
+  if (text == null) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 // Utility function to handle API responses consistently
 function handleAPIResponse(response) {
   return response.json().then(data => {
@@ -479,7 +487,8 @@ function entriesPage() {
     loading: {
       entries: false,
       delete: false,
-      reset: false
+      reset: false,
+      viewContent: ''
     },
     
     get collections() {
@@ -508,6 +517,80 @@ function entriesPage() {
         });
     },
     
+    showEntryContent(entry) {
+      if (!this.selectedListCollection) {
+        this.showToast('warning', 'Please select a collection');
+        return;
+      }
+
+      this.loading.viewContent = entry;
+
+      const entryEncoded = encodeURIComponent(entry);
+      fetch(`/api/collections/${this.selectedListCollection}/entries/${entryEncoded}`)
+        .then(response => {
+          if (!response.ok) {
+            return response.json().then(data => {
+              const err = new Error(data.error?.message || data.error?.details || 'Failed to load content');
+              err.status = response.status;
+              err.code = data.error?.code;
+              throw err;
+            }).catch(e => {
+              if (e instanceof Error && e.status !== undefined) throw e;
+              const fallback = new Error('Failed to load entry content');
+              fallback.status = response.status;
+              throw fallback;
+            });
+          }
+          return response.json();
+        })
+        .then(data => {
+          const chunks = data.data?.chunks || [];
+          const entryName = data.data?.entry || entry;
+          const count = data.data?.count ?? chunks.length;
+
+          if (chunks.length === 0) {
+            Swal.fire({
+              title: 'Entry content',
+              html: '<p class="text-gray-600 dark:text-gray-400">No chunks for this entry.</p>',
+              icon: 'info'
+            });
+            return;
+          }
+
+          const chunkBlocks = chunks.map((c, i) => {
+            const meta = c.metadata && Object.keys(c.metadata).length
+              ? '<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">' +
+                JSON.stringify(c.metadata) + '</div>'
+              : '';
+            return `<div class="text-left border-b border-gray-200 dark:border-gray-600 pb-3 mb-3 last:border-0 last:pb-0 last:mb-0">
+              <div class="text-xs font-semibold text-primary-600 dark:text-primary-400 mb-1">Chunk ${i + 1} (id: ${escapeHtml(c.id || '')})</div>
+              <pre class="text-sm whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-700 p-3 rounded max-h-40 overflow-y-auto">${escapeHtml(c.content || '')}</pre>
+              ${meta}
+            </div>`;
+          }).join('');
+
+          Swal.fire({
+            title: `Content: ${escapeHtml(entryName)}`,
+            html: `<div class="text-sm text-gray-500 dark:text-gray-400 mb-3">${count} chunk(s)</div><div class="max-h-96 overflow-y-auto text-left">${chunkBlocks}</div>`,
+            width: '640px',
+            showConfirmButton: true,
+            confirmButtonText: 'Close'
+          });
+        })
+        .catch(error => {
+          if (error.status === 501 || (error.message && error.message.toLowerCase().includes('does not support'))) {
+            this.showToast('warning', 'This collection backend does not support viewing entry content.');
+          } else if (error.status === 404) {
+            this.showToast('error', 'Entry not found.');
+          } else {
+            this.showToast('error', error.message || 'Failed to load entry content');
+          }
+        })
+        .finally(() => {
+          this.loading.viewContent = '';
+        });
+    },
+
     deleteEntry(entry) {
       if (!this.selectedListCollection) {
         this.showToast('warning', 'Please select a collection');
