@@ -31,6 +31,7 @@ type PersistentKB struct {
 	path         string
 	assetDir     string
 	maxChunkSize int
+	chunkOverlap int
 	sources      []*ExternalSource
 
 	index map[string][]engine.Result
@@ -57,7 +58,7 @@ func loadDB(path string) (*CollectionState, error) {
 	return state, nil
 }
 
-func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize int, llmClient *openai.Client, embeddingModel string) (*PersistentKB, error) {
+func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize, chunkOverlap int, llmClient *openai.Client, embeddingModel string) (*PersistentKB, error) {
 	// if file exists, try to load an existing state
 	// if file does not exist, create a new state
 	if err := os.MkdirAll(assetDir, 0755); err != nil {
@@ -70,6 +71,7 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 			Engine:       store,
 			assetDir:     assetDir,
 			maxChunkSize: maxChunkSize,
+			chunkOverlap: chunkOverlap,
 			sources:      []*ExternalSource{},
 			index:        map[string][]engine.Result{},
 		}
@@ -86,6 +88,7 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 		Engine:       store,
 		path:         stateFile,
 		maxChunkSize: maxChunkSize,
+		chunkOverlap: chunkOverlap,
 		assetDir:     assetDir,
 		sources:      state.ExternalSources,
 		index:        state.Index,
@@ -208,6 +211,50 @@ func (db *PersistentKB) EntryExists(entry string) bool {
 	return false
 }
 
+// GetEntryContent returns all chunks (content, id, metadata) for the given entry.
+// It uses the in-memory index and Engine.GetByID to resolve full chunk data.
+func (db *PersistentKB) GetEntryContent(entry string) ([]types.Result, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	entry = filepath.Base(entry)
+	chunkResults, ok := db.index[entry]
+	if !ok {
+		return nil, fmt.Errorf("entry not found: %s", entry)
+	}
+
+	results := make([]types.Result, 0, len(chunkResults))
+	for _, r := range chunkResults {
+		full, err := db.Engine.GetByID(r.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get chunk %s: %w", r.ID, err)
+		}
+		results = append(results, full)
+	}
+	return results, nil
+}
+
+// GetEntryFileContent returns the full content of the stored file (same text that was chunked, without overlap)
+// and the number of chunks it occupies. This avoids returning overlapping chunk content.
+func (db *PersistentKB) GetEntryFileContent(entry string) (content string, chunkCount int, err error) {
+	db.Lock()
+	defer db.Unlock()
+
+	entry = filepath.Base(entry)
+	chunkResults, ok := db.index[entry]
+	if !ok {
+		return "", 0, fmt.Errorf("entry not found: %s", entry)
+	}
+	chunkCount = len(chunkResults)
+
+	fpath := filepath.Join(db.assetDir, entry)
+	content, err = fileToText(fpath)
+	if err != nil {
+		return "", 0, err
+	}
+	return content, chunkCount, nil
+}
+
 // Store stores an entry in the persistent knowledge base.
 func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
 	db.Lock()
@@ -307,7 +354,7 @@ func (db *PersistentKB) store(metadata map[string]string, files ...string) ([]en
 
 	for _, c := range files {
 		e := filepath.Join(db.assetDir, filepath.Base(c))
-		pieces, err := chunkFile(e, db.maxChunkSize)
+		pieces, err := chunkFile(e, db.maxChunkSize, db.chunkOverlap)
 		if err != nil {
 			return nil, err
 		}
@@ -407,58 +454,52 @@ func copyFile(src, dst string) error {
 	return nil
 }
 
-func chunkFile(fpath string, maxchunksize int) ([]string, error) {
+// fileToText extracts the full text from a stored file (same logic as chunkFile but no splitting).
+// Used by GetEntryFileContent to return content without chunk overlap.
+func fileToText(fpath string) (string, error) {
 	if _, err := os.Stat(fpath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("file does not exist: %s", fpath)
+		return "", fmt.Errorf("file does not exist: %s", fpath)
 	}
-
-	// Get file extension:
-	// If it's a .txt file, read the file and split it into chunks.
-	// If it's a .pdf file, convert it to text and split it into chunks.
-	// ...
 	extension := filepath.Ext(fpath)
 	switch extension {
 	case ".pdf":
 		r, err := pdf.Open(fpath)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		var buf bytes.Buffer
 		b, err := r.GetPlainText()
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		buf.ReadFrom(b)
-		return chunk.SplitParagraphIntoChunks(buf.String(), maxchunksize), nil
+		return buf.String(), nil
 	case ".txt", ".md":
-		xlog.Debug("Reading text file: ", fpath)
 		f, err := os.Open(fpath)
 		if err != nil {
-			xlog.Error("Error opening file: ", fpath)
-			return nil, err
+			return "", err
 		}
 		defer f.Close()
 		content, err := io.ReadAll(f)
 		if err != nil {
-			xlog.Error("Error reading file: ", fpath)
-			return nil, err
+			return "", err
 		}
-		contentStr := string(content)
-		chunks := chunk.SplitParagraphIntoChunks(contentStr, maxchunksize)
-		xlog.Info("Chunked file", "file", fpath, "content_length", len(contentStr), "max_chunk_size", maxchunksize, "chunk_count", len(chunks))
-		if len(chunks) > 0 {
-			xlog.Debug("First chunk length", "length", len(chunks[0]))
-			if len(chunks) > 1 {
-				xlog.Debug("Last chunk length", "length", len(chunks[len(chunks)-1]))
-			}
-		}
-		return chunks, nil
-
+		return string(content), nil
 	default:
-		xlog.Error("Unsupported file type: ", extension)
+		return "", fmt.Errorf("unsupported file type: %s", extension)
+	}
+}
+
+func chunkFile(fpath string, maxchunksize, chunkOverlap int) ([]string, error) {
+	content, err := fileToText(fpath)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("not implemented")
+	opts := chunk.Options{MaxSize: maxchunksize, Overlap: chunkOverlap, SplitLongWords: true}
+	chunks := chunk.SplitParagraphIntoChunksWithOptions(content, opts)
+	xlog.Info("Chunked file", "file", fpath, "content_length", len(content), "max_chunk_size", maxchunksize, "chunk_overlap", chunkOverlap, "chunk_count", len(chunks))
+	return chunks, nil
 }
 
 // GetExternalSources returns the list of external sources for this collection

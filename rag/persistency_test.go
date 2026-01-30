@@ -78,13 +78,13 @@ var _ = Describe("PersistentKB", func() {
 
 	Describe("NewPersistentCollectionKB", func() {
 		It("should create a new persistent KB", func() {
-			kb, err := NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, openaiClient, "granite-embedding-107m-multilingual")
+			kb, err := NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, 0, openaiClient, "granite-embedding-107m-multilingual")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(kb).ToNot(BeNil())
 		})
 
 		It("should create state file", func() {
-			_, err := NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, openaiClient, "granite-embedding-107m-multilingual")
+			_, err := NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, 0, openaiClient, "granite-embedding-107m-multilingual")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(stateFile).To(BeAnExistingFile())
 		})
@@ -95,7 +95,7 @@ var _ = Describe("PersistentKB", func() {
 
 		BeforeEach(func() {
 			var err error
-			kb, err = NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, openaiClient, "granite-embedding-107m-multilingual")
+			kb, err = NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, 0, openaiClient, "granite-embedding-107m-multilingual")
 			Expect(err).ToNot(HaveOccurred())
 		})
 
@@ -110,13 +110,49 @@ var _ = Describe("PersistentKB", func() {
 
 		BeforeEach(func() {
 			var err error
-			kb, err = NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, openaiClient, "granite-embedding-107m-multilingual")
+			kb, err = NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, 0, openaiClient, "granite-embedding-107m-multilingual")
 			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should return zero for empty collection", func() {
 			count := kb.Count()
 			Expect(count).To(Equal(0))
+		})
+	})
+
+	Describe("GetEntryContent", func() {
+		var kb *PersistentKB
+		var testFile string
+
+		BeforeEach(func() {
+			var err error
+			kb, err = NewPersistentCollectionKB(stateFile, assetDir, engine, 1000, 0, openaiClient, "granite-embedding-107m-multilingual")
+			Expect(err).ToNot(HaveOccurred())
+
+			testFile = filepath.Join(tempDir, "getcontent.txt")
+			err = os.WriteFile(testFile, []byte("This is content for GetEntryContent test."), 0644)
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("should return entry not found for missing entry", func() {
+			_, err := kb.GetEntryContent("nonexistent.txt")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("entry not found"))
+		})
+
+		It("should return chunks for stored entry", func() {
+			err := kb.Store(testFile, map[string]string{"type": "test"})
+			Expect(err).ToNot(HaveOccurred())
+
+			results, err := kb.GetEntryContent("getcontent.txt")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(results).ToNot(BeEmpty())
+
+			var fullContent string
+			for _, r := range results {
+				fullContent += r.Content
+			}
+			Expect(fullContent).To(ContainSubstring("This is content for GetEntryContent test"))
 		})
 	})
 })

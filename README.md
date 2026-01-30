@@ -202,6 +202,7 @@ LocalRecall uses environment variables to configure its behavior. These variable
 | `LISTENING_ADDRESS`         | Address the server listens on (default: `:8080`). Useful for deployments on custom ports or network interfaces. |
 | `VECTOR_ENGINE`             | Vector database engine to use (`chromem` by default, `postgres` for PostgreSQL).                              |
 | `MAX_CHUNKING_SIZE`         | Maximum size (in characters) for breaking down documents into chunks. Affects performance and accuracy.       |
+| `CHUNK_OVERLAP`             | Overlap in characters between consecutive chunks (word-aligned). Default: 0. Use to improve context across chunk boundaries. |
 | `HYBRID_SEARCH_BM25_WEIGHT` | Weight for BM25 keyword search in hybrid search (default: 0.5, PostgreSQL only).                                 |
 | `HYBRID_SEARCH_VECTOR_WEIGHT` | Weight for vector similarity search in hybrid search (default: 0.5, PostgreSQL only).                           |
 | `API_KEYS`                  | Comma-separated list of API keys for securing access to the REST API (optional).                                |
@@ -245,6 +246,14 @@ curl -X GET $BASE_URL/collections
 ```sh
 curl -X GET $BASE_URL/collections/myCollection/entries
 ```
+
+- **Get Entry Content**:
+
+```sh
+curl -X GET $BASE_URL/collections/myCollection/entries/file.txt
+```
+
+Returns `collection`, `entry`, `chunks` (array of `id`, `content`, `metadata`), and `count`.
 
 - **Search Collection**:
 

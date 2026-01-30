@@ -40,7 +40,7 @@ var _ = Describe("Persistency", func() {
 		Expect(err).To(BeNil())
 
 		// Create new PersistentKB
-		kb, err = rag.NewPersistentCollectionKB(stateFile, assetDir, chromemEngine, DefaultChunkSize, localAI, EmbeddingModel)
+		kb, err = rag.NewPersistentCollectionKB(stateFile, assetDir, chromemEngine, DefaultChunkSize, 0, localAI, EmbeddingModel)
 		Expect(err).To(BeNil())
 	})
 
@@ -112,6 +112,22 @@ var _ = Describe("Persistency", func() {
 			docs := kb.ListDocuments()
 			Expect(docs).To(HaveLen(1))
 			Expect(docs[0]).To(Equal("test.txt"))
+		})
+
+		It("should get entry content", func() {
+			metadata := map[string]string{"type": "test"}
+			err := kb.Store(testFile, metadata)
+			Expect(err).To(BeNil())
+
+			results, err := kb.GetEntryContent("test.txt")
+			Expect(err).To(BeNil())
+			Expect(results).ToNot(BeEmpty())
+
+			var fullContent string
+			for _, r := range results {
+				fullContent += r.Content
+			}
+			Expect(fullContent).To(ContainSubstring("This is a test document"))
 		})
 	})
 

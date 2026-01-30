@@ -21,6 +21,7 @@ var (
 	listeningAddress = os.Getenv("LISTENING_ADDRESS")
 	vectorEngine     = os.Getenv("VECTOR_ENGINE")
 	maxChunkingSize  = os.Getenv("MAX_CHUNKING_SIZE")
+	chunkOverlap     = os.Getenv("CHUNK_OVERLAP")
 	apiKeys          = os.Getenv("API_KEYS")
 	gitPrivateKey    = os.Getenv("GIT_PRIVATE_KEY")
 	sourceManager    = rag.NewSourceManager(&sources.Config{
@@ -77,7 +78,16 @@ func startAPI(listenAddress string) {
 		}
 	}
 
-	registerAPIRoutes(e, openAIClient, chunkingSize, keys)
+	overlap := 0
+	if chunkOverlap != "" {
+		var err error
+		overlap, err = strconv.Atoi(chunkOverlap)
+		if err != nil {
+			e.Logger.Fatal("Failed to convert CHUNK_OVERLAP to integer")
+		}
+	}
+
+	registerAPIRoutes(e, openAIClient, chunkingSize, overlap, keys)
 
 	e.Logger.Fatal(e.Start(listenAddress))
 }

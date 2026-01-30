@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,14 +67,14 @@ func errorResponse(code string, message string, details string) APIResponse {
 func newVectorEngine(
 	vectorEngineType string,
 	llmClient *openai.Client,
-	apiURL, apiKey, collectionName, dbPath, embeddingModel string, maxChunkSize int) *rag.PersistentKB {
+	apiURL, apiKey, collectionName, dbPath, embeddingModel string, maxChunkSize, chunkOverlap int) *rag.PersistentKB {
 	switch vectorEngineType {
 	case "chromem":
 		xlog.Info("Chromem collection", "collectionName", collectionName, "dbPath", dbPath)
-		return rag.NewPersistentChromeCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize)
+		return rag.NewPersistentChromeCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap)
 	case "localai":
 		xlog.Info("LocalAI collection", "collectionName", collectionName, "apiURL", apiURL)
-		return rag.NewPersistentLocalAICollection(llmClient, apiURL, apiKey, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize)
+		return rag.NewPersistentLocalAICollection(llmClient, apiURL, apiKey, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap)
 	case "postgres":
 		databaseURL := os.Getenv("DATABASE_URL")
 		if databaseURL == "" {
@@ -81,7 +82,7 @@ func newVectorEngine(
 			os.Exit(1)
 		}
 		xlog.Info("PostgreSQL collection", "collectionName", collectionName, "databaseURL", databaseURL)
-		return rag.NewPersistentPostgresCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, databaseURL)
+		return rag.NewPersistentPostgresCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap, databaseURL)
 	default:
 		xlog.Error("Unknown vector engine", "engine", vectorEngineType)
 		os.Exit(1)
@@ -91,12 +92,12 @@ func newVectorEngine(
 }
 
 // API routes for managing collections
-func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSize int, apiKeys []string) {
+func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSize, chunkOverlap int, apiKeys []string) {
 
 	// Load all collections
 	colls := rag.ListAllCollections(collectionDBPath)
 	for _, c := range colls {
-		collection := newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel, maxChunkingSize)
+		collection := newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel, maxChunkingSize, chunkOverlap)
 		collections[c] = collection
 		// Register the collection with the source manager
 		sourceManager.RegisterCollection(c, collection)
@@ -121,10 +122,11 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 		})
 	}
 
-	e.POST("/api/collections", createCollection(collections, openAIClient, embeddingModel, maxChunkingSize))
+	e.POST("/api/collections", createCollection(collections, openAIClient, embeddingModel, maxChunkingSize, chunkOverlap))
 	e.POST("/api/collections/:name/upload", uploadFile(collections, fileAssets))
 	e.GET("/api/collections", listCollections)
 	e.GET("/api/collections/:name/entries", listFiles(collections))
+	e.GET("/api/collections/:name/entries/:entry", getEntryContent(collections))
 	e.POST("/api/collections/:name/search", search(collections))
 	e.POST("/api/collections/:name/reset", reset(collections))
 	e.DELETE("/api/collections/:name/entry/delete", deleteEntryFromCollection(collections))
@@ -134,7 +136,7 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 }
 
 // createCollection handles creating a new collection
-func createCollection(collections collectionList, client *openai.Client, embeddingModel string, maxChunkingSize int) func(c echo.Context) error {
+func createCollection(collections collectionList, client *openai.Client, embeddingModel string, maxChunkingSize, chunkOverlap int) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		type request struct {
 			Name string `json:"name"`
@@ -145,7 +147,7 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid request", err.Error()))
 		}
 
-		collection := newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel, maxChunkingSize)
+		collection := newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel, maxChunkingSize, chunkOverlap)
 		collections[r.Name] = collection
 
 		// Register the new collection with the source manager
@@ -266,6 +268,42 @@ func listFiles(collections collectionList) func(c echo.Context) error {
 			"collection": name,
 			"entries":    entries,
 			"count":      len(entries),
+		})
+		return c.JSON(http.StatusOK, response)
+	}
+}
+
+// getEntryContent returns the full content of the stored file (no chunk overlap) and the number of chunks it occupies.
+func getEntryContent(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
+		}
+
+		entryParam := c.Param("entry")
+		entry, err := url.PathUnescape(entryParam)
+		if err != nil {
+			entry = entryParam
+		}
+
+		content, chunkCount, err := collection.GetEntryFileContent(entry)
+		if err != nil {
+			if strings.Contains(err.Error(), "entry not found") {
+				return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Entry not found", fmt.Sprintf("Entry '%s' does not exist in collection '%s'", entry, name)))
+			}
+			if strings.Contains(err.Error(), "not implemented") || strings.Contains(err.Error(), "unsupported file type") {
+				return c.JSON(http.StatusNotImplemented, errorResponse(ErrCodeInternalError, "Not supported", err.Error()))
+			}
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to get entry content", err.Error()))
+		}
+
+		response := successResponse("Entry content retrieved successfully", map[string]interface{}{
+			"collection":  name,
+			"entry":       entry,
+			"content":     content,
+			"chunk_count": chunkCount,
 		})
 		return c.JSON(http.StatusOK, response)
 	}
