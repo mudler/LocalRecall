@@ -544,34 +544,17 @@ function entriesPage() {
           return response.json();
         })
         .then(data => {
-          const chunks = data.data?.chunks || [];
+          const content = data.data?.content ?? '';
+          const chunkCount = data.data?.chunk_count ?? 0;
           const entryName = data.data?.entry || entry;
-          const count = data.data?.count ?? chunks.length;
 
-          if (chunks.length === 0) {
-            Swal.fire({
-              title: 'Entry content',
-              html: '<p class="text-gray-600 dark:text-gray-400">No chunks for this entry.</p>',
-              icon: 'info'
-            });
-            return;
-          }
-
-          const chunkBlocks = chunks.map((c, i) => {
-            const meta = c.metadata && Object.keys(c.metadata).length
-              ? '<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">' +
-                JSON.stringify(c.metadata) + '</div>'
-              : '';
-            return `<div class="text-left border-b border-gray-200 dark:border-gray-600 pb-3 mb-3 last:border-0 last:pb-0 last:mb-0">
-              <div class="text-xs font-semibold text-primary-600 dark:text-primary-400 mb-1">Chunk ${i + 1} (id: ${escapeHtml(c.id || '')})</div>
-              <pre class="text-sm whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-700 p-3 rounded max-h-40 overflow-y-auto">${escapeHtml(c.content || '')}</pre>
-              ${meta}
-            </div>`;
-          }).join('');
+          const contentBlock = content
+            ? `<pre class="text-sm whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-700 p-3 rounded max-h-96 overflow-y-auto text-left">${escapeHtml(content)}</pre>`
+            : '<p class="text-gray-600 dark:text-gray-400">Empty entry.</p>';
 
           Swal.fire({
             title: `Content: ${escapeHtml(entryName)}`,
-            html: `<div class="text-sm text-gray-500 dark:text-gray-400 mb-3">${count} chunk(s)</div><div class="max-h-96 overflow-y-auto text-left">${chunkBlocks}</div>`,
+            html: `<div class="text-sm text-gray-500 dark:text-gray-400 mb-3">${chunkCount} chunk(s) in index</div><div class="max-h-96 overflow-y-auto text-left">${contentBlock}</div>`,
             width: '640px',
             showConfirmButton: true,
             confirmButtonText: 'Close'

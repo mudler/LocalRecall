@@ -15,7 +15,7 @@ import (
 const collectionPrefix = "collection-"
 
 // NewPersistentChromeCollection creates a new persistent knowledge base collection using the ChromemDB engine
-func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize int) *PersistentKB {
+func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int) *PersistentKB {
 	chromemDB, err := engine.NewChromemDBCollection(collectionName, dbPath, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create ChromemDB", err)
@@ -26,7 +26,7 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
 		chromemDB,
-		maxChunkSize, llmClient, embeddingModel)
+		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
 		os.Exit(1)
@@ -36,7 +36,7 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 }
 
 // NewPersistentLocalAICollection creates a new persistent knowledge base collection using the LocalAI stores engine
-func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize int) *PersistentKB {
+func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int) *PersistentKB {
 	laiStore := localai.NewStoreClient(apiURL, apiKey)
 	ragDB := engine.NewLocalAIRAGDB(laiStore, llmClient, embeddingModel)
 
@@ -44,7 +44,7 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
 		ragDB,
-		maxChunkSize, llmClient, embeddingModel)
+		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
 		os.Exit(1)
@@ -58,7 +58,7 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 }
 
 // NewPersistentPostgresCollection creates a new persistent knowledge base collection using the PostgreSQL engine
-func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize int, databaseURL string) *PersistentKB {
+func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int, databaseURL string) *PersistentKB {
 	postgresDB, err := engine.NewPostgresDBCollection(collectionName, databaseURL, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create PostgresDB", err)
@@ -69,7 +69,7 @@ func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, d
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
 		filePath,
 		postgresDB,
-		maxChunkSize, llmClient, embeddingModel)
+		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
 		xlog.Error("Failed to create PersistentKB", err)
 		os.Exit(1)
