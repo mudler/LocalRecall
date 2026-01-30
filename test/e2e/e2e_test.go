@@ -141,6 +141,26 @@ var _ = Describe("API", func() {
 
 		expectContent(TestCollection, "heist", "the Great Pigeon Heist", localRecall)
 	})
+
+	It("should get entry content", func() {
+		err := localRecall.CreateCollection(TestCollection)
+		Expect(err).ToNot(HaveOccurred())
+
+		fileName := tempContent(story1, localRecall)
+
+		chunks, err := localRecall.GetEntryContent(TestCollection, fileName)
+		if err != nil && err.Error() == "this collection backend does not support listing entry content" {
+			Skip("Backend (e.g. LocalAI) does not support GetEntryContent")
+		}
+		Expect(err).ToNot(HaveOccurred())
+		Expect(chunks).ToNot(BeEmpty())
+
+		var fullContent string
+		for _, c := range chunks {
+			fullContent += c.Content
+		}
+		Expect(fullContent).To(ContainSubstring("Bertie"))
+	})
 })
 
 func tempContent(content string, localRecall *client.Client) string {
