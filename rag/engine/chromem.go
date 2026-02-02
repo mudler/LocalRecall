@@ -1,11 +1,21 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
+	"time"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/mudler/localrecall/rag/types"
+	"github.com/mudler/xlog"
 	"github.com/philippgille/chromem-go"
 	"github.com/sashabaranov/go-openai"
 )
@@ -17,6 +27,15 @@ type ChromemDB struct {
 	client          *openai.Client
 	db              *chromem.DB
 	embeddingsModel string
+	bleveIndex      bleve.Index
+	bleveIndexPath  string
+	bm25Weight      float64
+	vectorWeight    float64
+	bleveAnalyzer   string
+	rerankerModel   string
+	localAIBaseURL  string
+	localAIAPIKey   string
+	httpClient      *http.Client
 }
 
 func NewChromemDBCollection(collection, path string, openaiClient *openai.Client, embeddingsModel string) (*ChromemDB, error) {
@@ -25,26 +44,95 @@ func NewChromemDBCollection(collection, path string, openaiClient *openai.Client
 		return nil, err
 	}
 
-	chromem := &ChromemDB{
+	// Get hybrid search weights from environment
+	bm25Weight := 0.5
+	vectorWeight := 0.5
+	if w := os.Getenv("HYBRID_SEARCH_BM25_WEIGHT"); w != "" {
+		if parsed, err := strconv.ParseFloat(w, 64); err == nil {
+			bm25Weight = parsed
+		}
+	}
+	if w := os.Getenv("HYBRID_SEARCH_VECTOR_WEIGHT"); w != "" {
+		if parsed, err := strconv.ParseFloat(w, 64); err == nil {
+			vectorWeight = parsed
+		}
+	}
+
+	bleveAnalyzer := "en"
+	if a := os.Getenv("BLEVE_ANALYZER"); a != "" {
+		bleveAnalyzer = a
+	}
+
+	// Get reranker configuration
+	rerankerModel := os.Getenv("RERANKER_MODEL")
+	localAIBaseURL := os.Getenv("OPENAI_BASE_URL")
+	localAIAPIKey := os.Getenv("OPENAI_API_KEY")
+
+	chromemDB := &ChromemDB{
 		collectionName:  collection,
 		index:           1,
 		db:              db,
 		client:          openaiClient,
 		embeddingsModel: embeddingsModel,
+		bm25Weight:      bm25Weight,
+		vectorWeight:    vectorWeight,
+		bleveAnalyzer:   bleveAnalyzer,
+		rerankerModel:   rerankerModel,
+		localAIBaseURL:  localAIBaseURL,
+		localAIAPIKey:   localAIAPIKey,
+		httpClient:      &http.Client{Timeout: 30 * time.Second},
 	}
 
-	c, err := db.GetOrCreateCollection(collection, nil, chromem.embedding())
+	c, err := db.GetOrCreateCollection(collection, nil, chromemDB.embedding())
 	if err != nil {
 		return nil, err
 	}
-	chromem.collection = c
+	chromemDB.collection = c
 
 	count := c.Count()
 	if count > 0 {
-		chromem.index = count + 1
+		chromemDB.index = count + 1
 	}
 
-	return chromem, nil
+	// Initialize bleve index
+	bleveIndexPath := filepath.Join(path, "bleve", collection)
+	chromemDB.bleveIndexPath = bleveIndexPath
+
+	// Try to open existing index, or create new one
+	bleveIndex, err := bleve.Open(bleveIndexPath)
+	if err != nil {
+		// Index doesn't exist, create it
+		mapping := bleve.NewIndexMapping()
+
+		// Configure English analyzer for text fields
+		englishTextFieldMapping := bleve.NewTextFieldMapping()
+		englishTextFieldMapping.Analyzer = chromemDB.bleveAnalyzer
+
+		// Create document mapping
+		docMapping := bleve.NewDocumentMapping()
+		docMapping.AddFieldMappingsAt("content", englishTextFieldMapping)
+		docMapping.AddFieldMappingsAt("title", englishTextFieldMapping)
+
+		// Add metadata as stored field
+		metadataMapping := bleve.NewDocumentDisabledMapping()
+		docMapping.AddSubDocumentMapping("metadata", metadataMapping)
+
+		mapping.AddDocumentMapping("_default", docMapping)
+		mapping.DefaultAnalyzer = chromemDB.bleveAnalyzer
+
+		bleveIndex, err = bleve.New(bleveIndexPath, mapping)
+		if err != nil {
+			xlog.Warn("Failed to create bleve index, continuing with chromem-only", "error", err)
+			// Continue without bleve - graceful degradation
+			chromemDB.bleveIndex = nil
+		} else {
+			chromemDB.bleveIndex = bleveIndex
+		}
+	} else {
+		chromemDB.bleveIndex = bleveIndex
+	}
+
+	return chromemDB, nil
 }
 
 func (c *ChromemDB) Count() int {
@@ -52,6 +140,7 @@ func (c *ChromemDB) Count() int {
 }
 
 func (c *ChromemDB) Reset() error {
+	// Reset chromem collection
 	if err := c.db.DeleteCollection(c.collectionName); err != nil {
 		return fmt.Errorf("error deleting collection: %v", err)
 	}
@@ -60,6 +149,39 @@ func (c *ChromemDB) Reset() error {
 		return fmt.Errorf("error creating collection: %v", err)
 	}
 	c.collection = collection
+
+	// Reset bleve index if available
+	if c.bleveIndex != nil {
+		// Close existing index
+		if err := c.bleveIndex.Close(); err != nil {
+			xlog.Warn("Failed to close bleve index", "error", err)
+		}
+
+		// Remove index directory
+		if err := os.RemoveAll(c.bleveIndexPath); err != nil {
+			xlog.Warn("Failed to remove bleve index directory", "error", err)
+		}
+
+		// Recreate index
+		mapping := bleve.NewIndexMapping()
+		englishTextFieldMapping := bleve.NewTextFieldMapping()
+		englishTextFieldMapping.Analyzer = c.bleveAnalyzer
+		docMapping := bleve.NewDocumentMapping()
+		docMapping.AddFieldMappingsAt("content", englishTextFieldMapping)
+		docMapping.AddFieldMappingsAt("title", englishTextFieldMapping)
+		metadataMapping := bleve.NewDocumentDisabledMapping()
+		docMapping.AddSubDocumentMapping("metadata", metadataMapping)
+		mapping.AddDocumentMapping("_default", docMapping)
+		mapping.DefaultAnalyzer = c.bleveAnalyzer
+
+		bleveIndex, err := bleve.New(c.bleveIndexPath, mapping)
+		if err != nil {
+			xlog.Warn("Failed to recreate bleve index", "error", err)
+			c.bleveIndex = nil
+		} else {
+			c.bleveIndex = bleveIndex
+		}
+	}
 
 	return nil
 }
@@ -110,18 +232,48 @@ func (c *ChromemDB) Store(s string, metadata map[string]string) (Result, error) 
 		return Result{}, fmt.Errorf("empty string")
 	}
 
+	docID := fmt.Sprint(c.index)
+
+	// Store in chromem
 	if err := c.collection.AddDocuments(context.Background(), []chromem.Document{
 		{
 			Metadata: metadata,
 			Content:  s,
-			ID:       fmt.Sprint(c.index),
+			ID:       docID,
 		},
 	}, runtime.NumCPU()); err != nil {
 		return Result{}, err
 	}
 
+	// Index in bleve if available
+	if c.bleveIndex != nil {
+		title := metadata["title"]
+		if title == "" {
+			title = metadata["source"]
+		}
+
+		bleveDoc := map[string]interface{}{
+			"id":      docID,
+			"content": s,
+			"title":   title,
+		}
+
+		// Store metadata as JSON string for filtering
+		if len(metadata) > 0 {
+			metadataJSON, err := json.Marshal(metadata)
+			if err == nil {
+				bleveDoc["metadata"] = string(metadataJSON)
+			}
+		}
+
+		if err := c.bleveIndex.Index(docID, bleveDoc); err != nil {
+			xlog.Warn("Failed to index document in bleve", "id", docID, "error", err)
+			// Continue even if bleve indexing fails
+		}
+	}
+
 	return Result{
-		ID: fmt.Sprint(c.index),
+		ID: docID,
 	}, nil
 }
 
@@ -137,25 +289,80 @@ func (c *ChromemDB) StoreDocuments(s []string, metadata map[string]string) ([]Re
 	results := make([]Result, len(s))
 	documents := make([]chromem.Document, len(s))
 	for i, content := range s {
+		docID := fmt.Sprint(c.index + i)
 		documents[i] = chromem.Document{
 			Metadata: metadata,
 			Content:  content,
-			ID:       fmt.Sprint(c.index + i),
+			ID:       docID,
 		}
 		results[i] = Result{
-			ID: fmt.Sprint(c.index + i),
+			ID: docID,
 		}
 	}
 
+	// Store in chromem
 	if err := c.collection.AddDocuments(context.Background(), documents, runtime.NumCPU()); err != nil {
 		return nil, err
+	}
+
+	// Index in bleve if available
+	if c.bleveIndex != nil {
+		title := metadata["title"]
+		if title == "" {
+			title = metadata["source"]
+		}
+
+		metadataJSON, _ := json.Marshal(metadata)
+
+		for i, content := range s {
+			docID := fmt.Sprint(c.index + i)
+			bleveDoc := map[string]interface{}{
+				"id":      docID,
+				"content": content,
+				"title":   title,
+			}
+
+			if len(metadata) > 0 {
+				bleveDoc["metadata"] = string(metadataJSON)
+			}
+
+			if err := c.bleveIndex.Index(docID, bleveDoc); err != nil {
+				xlog.Warn("Failed to index document in bleve", "id", docID, "error", err)
+				// Continue even if bleve indexing fails
+			}
+		}
 	}
 
 	return results, nil
 }
 
 func (c *ChromemDB) Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error {
-	return c.collection.Delete(context.Background(), where, whereDocuments, ids...)
+	// Delete from chromem
+	if err := c.collection.Delete(context.Background(), where, whereDocuments, ids...); err != nil {
+		return err
+	}
+
+	// Delete from bleve if available
+	if c.bleveIndex != nil {
+		// If deleting by IDs, delete those IDs from bleve
+		if len(ids) > 0 {
+			for _, id := range ids {
+				if err := c.bleveIndex.Delete(id); err != nil {
+					xlog.Warn("Failed to delete document from bleve", "id", id, "error", err)
+					// Continue even if bleve deletion fails
+				}
+			}
+		} else {
+			// If deleting by metadata filters, we need to search and delete
+			// This is more complex - for now, we'll log a warning
+			// In practice, chromem handles metadata filtering, so this should be rare
+			if len(where) > 0 || len(whereDocuments) > 0 {
+				xlog.Warn("Bleve delete by metadata filters not fully supported, may need manual cleanup")
+			}
+		}
+	}
+
+	return nil
 }
 
 func (c *ChromemDB) GetByID(id string) (types.Result, error) {
@@ -167,23 +374,412 @@ func (c *ChromemDB) GetByID(id string) (types.Result, error) {
 	return types.Result{ID: res.ID, Metadata: res.Metadata, Content: res.Content}, nil
 }
 
+// Reranker API types matching JINA reranker schema
+type rerankRequest struct {
+	Model     string   `json:"model"`
+	Query     string   `json:"query"`
+	Documents []string `json:"documents"`
+	TopN      *int     `json:"top_n,omitempty"`
+}
+
+type rerankDocumentResult struct {
+	Index          int     `json:"index"`
+	Document       textDoc `json:"document"`
+	RelevanceScore float64 `json:"relevance_score"`
+}
+
+type textDoc struct {
+	Text string `json:"text"`
+}
+
+type rerankResponse struct {
+	Model   string                 `json:"model"`
+	Usage   usageInfo              `json:"usage"`
+	Results []rerankDocumentResult `json:"results"`
+}
+
+type usageInfo struct {
+	TotalTokens  int `json:"total_tokens"`
+	PromptTokens int `json:"prompt_tokens"`
+}
+
+type rerankResult struct {
+	Index          int
+	Document       string
+	RelevanceScore float64
+}
+
+// rerankDocuments calls LocalAI's reranker API to rerank documents by relevance to a query
+func (c *ChromemDB) rerankDocuments(ctx context.Context, query string, documents []string, topN int) ([]rerankResult, error) {
+	if c.localAIBaseURL == "" {
+		return nil, fmt.Errorf("LocalAI base URL not configured")
+	}
+	if c.rerankerModel == "" {
+		return nil, fmt.Errorf("reranker model not configured")
+	}
+
+	url := fmt.Sprintf("%s/v1/rerank", c.localAIBaseURL)
+
+	reqBody := rerankRequest{
+		Model:     c.rerankerModel,
+		Query:     query,
+		Documents: documents,
+		TopN:      &topN,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal rerank request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rerank request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.localAIAPIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.localAIAPIKey))
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute rerank request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("rerank API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read rerank response: %w", err)
+	}
+
+	var rerankResp rerankResponse
+	if err := json.Unmarshal(body, &rerankResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal rerank response: %w", err)
+	}
+
+	results := make([]rerankResult, len(rerankResp.Results))
+	for i, r := range rerankResp.Results {
+		results[i] = rerankResult{
+			Index:          r.Index,
+			Document:       r.Document.Text,
+			RelevanceScore: r.RelevanceScore,
+		}
+	}
+
+	return results, nil
+}
+
+// searchWithReranker collects candidates from chromem and bleve, then uses reranker to order results
+func (c *ChromemDB) searchWithReranker(ctx context.Context, query string, topN int, chromemResults []chromem.Result, bleveSearchResult *bleve.SearchResult) ([]types.Result, error) {
+	// Collect all candidate documents
+	candidateMap := make(map[string]types.Result)
+
+	// Add chromem results
+	for _, r := range chromemResults {
+		candidateMap[r.ID] = types.Result{
+			ID:         r.ID,
+			Metadata:   r.Metadata,
+			Content:    r.Content,
+			Similarity: r.Similarity,
+		}
+	}
+
+	// Add bleve results if available
+	if bleveSearchResult != nil {
+		for _, hit := range bleveSearchResult.Hits {
+			id := hit.ID
+			if _, exists := candidateMap[id]; !exists {
+				// Extract fields from search hit
+				var content, title string
+				var metadata map[string]string
+
+				if contentVal, ok := hit.Fields["content"]; ok {
+					if str, ok := contentVal.(string); ok {
+						content = str
+					} else if arr, ok := contentVal.([]interface{}); ok && len(arr) > 0 {
+						if str, ok := arr[0].(string); ok {
+							content = str
+						}
+					}
+				}
+				if titleVal, ok := hit.Fields["title"]; ok {
+					if str, ok := titleVal.(string); ok {
+						title = str
+					} else if arr, ok := titleVal.([]interface{}); ok && len(arr) > 0 {
+						if str, ok := arr[0].(string); ok {
+							title = str
+						}
+					}
+				}
+				if metadataVal, ok := hit.Fields["metadata"]; ok {
+					if str, ok := metadataVal.(string); ok {
+						if err := json.Unmarshal([]byte(str), &metadata); err != nil {
+							metadata = make(map[string]string)
+						}
+					} else if arr, ok := metadataVal.([]interface{}); ok && len(arr) > 0 {
+						if str, ok := arr[0].(string); ok {
+							if err := json.Unmarshal([]byte(str), &metadata); err != nil {
+								metadata = make(map[string]string)
+							}
+						}
+					}
+				}
+
+				if metadata == nil {
+					metadata = make(map[string]string)
+				}
+				if title != "" {
+					metadata["title"] = title
+				}
+
+				candidateMap[id] = types.Result{
+					ID:       id,
+					Content:  content,
+					Metadata: metadata,
+				}
+			}
+		}
+	}
+
+	// Convert to ordered list for reranker (preserve order for mapping back)
+	candidateList := make([]types.Result, 0, len(candidateMap))
+	documents := make([]string, 0, len(candidateMap))
+
+	for _, candidate := range candidateMap {
+		candidateList = append(candidateList, candidate)
+		documents = append(documents, candidate.Content)
+	}
+
+	if len(documents) == 0 {
+		return []types.Result{}, nil
+	}
+
+	// Call reranker
+	rerankResults, err := c.rerankDocuments(ctx, query, documents, topN)
+	if err != nil {
+		// Fallback to combined score approach if reranker fails
+		xlog.Warn("Reranker API call failed, falling back to combined score", "error", err)
+		return c.fallbackToCombinedScore(chromemResults, bleveSearchResult, topN)
+	}
+
+	// Map reranker results back to document IDs
+	results := make([]types.Result, 0, len(rerankResults))
+	for _, rerankResult := range rerankResults {
+		if rerankResult.Index >= 0 && rerankResult.Index < len(candidateList) {
+			result := candidateList[rerankResult.Index]
+			result.Similarity = float32(rerankResult.RelevanceScore)
+			results = append(results, result)
+		}
+	}
+
+	return results, nil
+}
+
+// fallbackToCombinedScore implements the original combined score approach as fallback
+func (c *ChromemDB) fallbackToCombinedScore(chromemResults []chromem.Result, bleveSearchResult *bleve.SearchResult, similarEntries int) ([]types.Result, error) {
+	// Create maps to combine results
+	chromemMap := make(map[string]types.Result)
+	bleveMap := make(map[string]float64)
+
+	// Map chromem results by ID
+	for _, r := range chromemResults {
+		chromemMap[r.ID] = types.Result{
+			ID:         r.ID,
+			Metadata:   r.Metadata,
+			Content:    r.Content,
+			Similarity: r.Similarity,
+		}
+	}
+
+	// Map bleve results by ID if available
+	if bleveSearchResult != nil {
+		for _, hit := range bleveSearchResult.Hits {
+			normalizedScore := hit.Score
+			if normalizedScore > 1.0 {
+				normalizedScore = 1.0
+			}
+			bleveMap[hit.ID] = normalizedScore
+		}
+	}
+
+	// Combine results: merge by ID and calculate combined score
+	combinedResults := make(map[string]types.Result)
+
+	// Process chromem results
+	for id, result := range chromemMap {
+		combinedResult := result
+		bleveScore, hasBleve := bleveMap[id]
+
+		if hasBleve {
+			// Both chromem and bleve have this result - combine scores
+			combinedScore := (float64(bleveScore) * c.bm25Weight) + (float64(result.Similarity) * c.vectorWeight)
+			combinedResult.Similarity = float32(combinedScore)
+		} else {
+			// Only chromem has this result - use vector weight only
+			combinedResult.Similarity = result.Similarity * float32(c.vectorWeight)
+		}
+
+		combinedResults[id] = combinedResult
+	}
+
+	// Process bleve-only results if available
+	if bleveSearchResult != nil {
+		for _, hit := range bleveSearchResult.Hits {
+			id := hit.ID
+			if _, exists := chromemMap[id]; !exists {
+				var content, title string
+				var metadata map[string]string
+
+				if contentVal, ok := hit.Fields["content"]; ok {
+					if str, ok := contentVal.(string); ok {
+						content = str
+					} else if arr, ok := contentVal.([]interface{}); ok && len(arr) > 0 {
+						if str, ok := arr[0].(string); ok {
+							content = str
+						}
+					}
+				}
+				if titleVal, ok := hit.Fields["title"]; ok {
+					if str, ok := titleVal.(string); ok {
+						title = str
+					} else if arr, ok := titleVal.([]interface{}); ok && len(arr) > 0 {
+						if str, ok := arr[0].(string); ok {
+							title = str
+						}
+					}
+				}
+				if metadataVal, ok := hit.Fields["metadata"]; ok {
+					if str, ok := metadataVal.(string); ok {
+						if err := json.Unmarshal([]byte(str), &metadata); err != nil {
+							metadata = make(map[string]string)
+						}
+					} else if arr, ok := metadataVal.([]interface{}); ok && len(arr) > 0 {
+						if str, ok := arr[0].(string); ok {
+							if err := json.Unmarshal([]byte(str), &metadata); err != nil {
+								metadata = make(map[string]string)
+							}
+						}
+					}
+				}
+
+				if metadata == nil {
+					metadata = make(map[string]string)
+				}
+				if title != "" {
+					metadata["title"] = title
+				}
+
+				bleveScore := bleveMap[id]
+				combinedScore := bleveScore * c.bm25Weight
+				combinedResults[id] = types.Result{
+					ID:         id,
+					Content:    content,
+					Metadata:   metadata,
+					Similarity: float32(combinedScore),
+				}
+			}
+		}
+	}
+
+	// Convert to slice and sort by combined score
+	results := make([]types.Result, 0, len(combinedResults))
+	for _, result := range combinedResults {
+		results = append(results, result)
+	}
+
+	// Sort by similarity descending
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[i].Similarity < results[j].Similarity {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	// Limit to requested number
+	if len(results) > similarEntries {
+		results = results[:similarEntries]
+	}
+
+	return results, nil
+}
+
 func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error) {
-	res, err := c.collection.Query(context.Background(), s, similarEntries, nil, nil)
+	ctx := context.Background()
+
+	// Get vector similarity results from chromem
+	chromemResults, err := c.collection.Query(ctx, s, similarEntries*2, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var results []types.Result
+	// If bleve is not available, check if we should use reranker or return chromem results only
+	if c.bleveIndex == nil {
+		// If reranker is configured, we still need to collect candidates for reranking
+		// But without bleve, we only have chromem results
+		if c.rerankerModel != "" && c.localAIBaseURL != "" {
+			// Use reranker with chromem-only results
+			return c.searchWithReranker(ctx, s, similarEntries, chromemResults, nil)
+		}
 
-	for _, r := range res {
-		results = append(results, types.Result{
-			ID:       r.ID,
-			Metadata: r.Metadata,
-			Content:  r.Content,
-
-			Similarity: r.Similarity,
-		})
+		// No reranker, no bleve - return chromem results only
+		results := make([]types.Result, 0, len(chromemResults))
+		for _, r := range chromemResults {
+			results = append(results, types.Result{
+				ID:         r.ID,
+				Metadata:   r.Metadata,
+				Content:    r.Content,
+				Similarity: r.Similarity,
+			})
+		}
+		// Limit to requested number
+		if len(results) > similarEntries {
+			results = results[:similarEntries]
+		}
+		return results, nil
 	}
 
-	return results, nil
+	// Perform full-text search with bleve
+	query := bleve.NewMatchQuery(s)
+	searchRequest := bleve.NewSearchRequest(query)
+	searchRequest.Size = similarEntries * 2
+	searchRequest.Fields = []string{"content", "title", "metadata"}
+	searchRequest.IncludeLocations = false
+
+	bleveSearchResult, err := c.bleveIndex.Search(searchRequest)
+	if err != nil {
+		// Fallback to chromem-only search if bleve fails
+		xlog.Warn("Bleve search failed, falling back to chromem-only", "error", err)
+		// Check if reranker is configured for chromem-only fallback
+		if c.rerankerModel != "" && c.localAIBaseURL != "" {
+			return c.searchWithReranker(ctx, s, similarEntries, chromemResults, nil)
+		}
+		results := make([]types.Result, 0, len(chromemResults))
+		for _, r := range chromemResults {
+			results = append(results, types.Result{
+				ID:         r.ID,
+				Metadata:   r.Metadata,
+				Content:    r.Content,
+				Similarity: r.Similarity,
+			})
+		}
+		if len(results) > similarEntries {
+			results = results[:similarEntries]
+		}
+		return results, nil
+	}
+
+	// Check if reranker is configured - if so, use reranker instead of combined scores
+	if c.rerankerModel != "" && c.localAIBaseURL != "" {
+		return c.searchWithReranker(ctx, s, similarEntries, chromemResults, bleveSearchResult)
+	}
+
+	// No reranker - use combined score approach (existing behavior)
+	return c.fallbackToCombinedScore(chromemResults, bleveSearchResult, similarEntries)
 }

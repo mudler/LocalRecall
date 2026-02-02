@@ -184,9 +184,9 @@ func deleteEntryFromCollection(collections collectionList) func(c echo.Context) 
 
 		remainingEntries := collection.ListDocuments()
 		response := successResponse("Entry deleted successfully", map[string]interface{}{
-			"deleted_entry":    r.Entry,
+			"deleted_entry":     r.Entry,
 			"remaining_entries": remainingEntries,
-			"entry_count":      len(remainingEntries),
+			"entry_count":       len(remainingEntries),
 		})
 		return c.JSON(http.StatusOK, response)
 	}
@@ -359,8 +359,8 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		}
 
 		response := successResponse("File uploaded successfully", map[string]interface{}{
-			"filename":   file.Filename,
-			"collection": name,
+			"filename":    file.Filename,
+			"collection":  name,
 			"uploaded_at": time.Now().Format(time.RFC3339),
 		})
 		return c.JSON(http.StatusOK, response)
