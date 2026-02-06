@@ -184,9 +184,9 @@ func deleteEntryFromCollection(collections collectionList) func(c echo.Context) 
 
 		remainingEntries := collection.ListDocuments()
 		response := successResponse("Entry deleted successfully", map[string]interface{}{
-			"deleted_entry":    r.Entry,
+			"deleted_entry":     r.Entry,
 			"remaining_entries": remainingEntries,
-			"entry_count":      len(remainingEntries),
+			"entry_count":       len(remainingEntries),
 		})
 		return c.JSON(http.StatusOK, response)
 	}
@@ -351,8 +351,10 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeConflict, "Entry already exists", fmt.Sprintf("File '%s' has already been uploaded to collection '%s'", file.Filename, name)))
 		}
 
+		now := time.Now().Format(time.RFC3339)
+
 		// Save the file to disk
-		err = collection.Store(filePath, map[string]string{})
+		err = collection.Store(filePath, map[string]string{"created_at": now})
 		if err != nil {
 			xlog.Error("Failed to store file", err)
 			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to store file", err.Error()))
@@ -361,7 +363,7 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		response := successResponse("File uploaded successfully", map[string]interface{}{
 			"filename":   file.Filename,
 			"collection": name,
-			"uploaded_at": time.Now().Format(time.RFC3339),
+			"created_at": now,
 		})
 		return c.JSON(http.StatusOK, response)
 	}
