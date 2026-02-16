@@ -59,6 +59,7 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     echo "shared_buffers = 128MB" >> "$PGDATA/postgresql.conf"
     # TimescaleDB requires shared_preload_libraries
     echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
+    echo "timescaledb.license = 'timescale'" >> "$PGDATA/postgresql.conf"
 
     # Start PostgreSQL temporarily to run init scripts
     echo "Starting PostgreSQL for initialization..."
@@ -82,6 +83,7 @@ EOSQL
         CREATE USER "$POSTGRES_USER" WITH PASSWORD '$POSTGRES_PASSWORD';
         CREATE DATABASE "$POSTGRES_DB" OWNER "$POSTGRES_USER";
         GRANT ALL PRIVILEGES ON DATABASE "$POSTGRES_DB" TO "$POSTGRES_USER";
+        ALTER USER "$POSTGRES_USER" WITH SUPERUSER;
 EOSQL
 
     # Restart PostgreSQL to load shared_preload_libraries for TimescaleDB
