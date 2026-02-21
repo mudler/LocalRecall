@@ -13,7 +13,7 @@ services:
     command:
       - granite-embedding-107m-multilingual
   postgres:
-    #image: quay.io/mudler/localrecall:v0.5.2-postgresql
+    #image: quay.io/mudler/localrecall:main-postgresql
     build:
       context: .
       dockerfile: Dockerfile.pgsql
@@ -31,7 +31,7 @@ services:
       timeout: 5s
       retries: 5
   ragserver:
-    #image: quay.io/mudler/localrecall:v0.5.2
+    #image: quay.io/mudler/localrecall:latest
     build:
       context: .
       dockerfile: Dockerfile
