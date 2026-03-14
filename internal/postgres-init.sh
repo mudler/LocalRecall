@@ -58,7 +58,7 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     echo "max_connections = 100" >> "$PGDATA/postgresql.conf"
     echo "shared_buffers = 128MB" >> "$PGDATA/postgresql.conf"
     # TimescaleDB requires shared_preload_libraries
-    echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
+    echo "shared_preload_libraries = 'timescaledb,pg_textsearch'" >> "$PGDATA/postgresql.conf"
     echo "timescaledb.license = 'timescale'" >> "$PGDATA/postgresql.conf"
 
     # Start PostgreSQL temporarily to run init scripts
