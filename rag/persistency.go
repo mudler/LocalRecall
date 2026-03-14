@@ -235,6 +235,22 @@ func (db *PersistentKB) GetEntryContent(entry string) ([]types.Result, error) {
 	return results, nil
 }
 
+// GetEntryFilePath returns the filesystem path of the stored file for the given entry.
+func (db *PersistentKB) GetEntryFilePath(entry string) (string, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	entry = filepath.Base(entry)
+	if _, ok := db.index[entry]; !ok {
+		return "", fmt.Errorf("entry not found: %s", entry)
+	}
+	fpath := filepath.Join(db.assetDir, entry)
+	if _, err := os.Stat(fpath); err != nil {
+		return "", fmt.Errorf("entry file not found: %s", entry)
+	}
+	return fpath, nil
+}
+
 // GetEntryFileContent returns the full content of the stored file (same text that was chunked, without overlap)
 // and the number of chunks it occupies. This avoids returning overlapping chunk content.
 func (db *PersistentKB) GetEntryFileContent(entry string) (content string, chunkCount int, err error) {
@@ -282,7 +298,11 @@ func (db *PersistentKB) storeFile(entry string, metadata map[string]string) erro
 	beforeCount := db.Engine.Count()
 	results, err := db.store(metadata, fileName)
 	if err != nil {
-		return fmt.Errorf("failed to store file: %w", err)
+		// File is already copied to assetDir. Index it with no chunks so it
+		// still appears in ListDocuments and can be served via GetEntryFilePath.
+		xlog.Warn("Chunking failed, storing file without chunks", "entry", entry, "error", err)
+		db.index[fileName] = nil
+		return db.save()
 	}
 	afterCount := db.Engine.Count()
 	xlog.Info("Stored file", "entry", entry, "fileName", fileName, "results_count", len(results), "count_before", beforeCount, "count_after", afterCount, "added_count", afterCount-beforeCount)

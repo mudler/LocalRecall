@@ -255,6 +255,14 @@ curl -X GET $BASE_URL/collections/myCollection/entries/file.txt
 
 Returns `collection`, `entry`, `chunks` (array of `id`, `content`, `metadata`), and `count`.
 
+- **Get Entry Raw File**:
+
+```sh
+curl -X GET $BASE_URL/collections/myCollection/entries/file.pdf/raw
+```
+
+Returns the original uploaded binary file with the appropriate Content-Type header.
+
 - **Search Collection**:
 
 ```sh

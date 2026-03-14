@@ -127,6 +127,7 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 	e.GET("/api/collections", listCollections)
 	e.GET("/api/collections/:name/entries", listFiles(collections))
 	e.GET("/api/collections/:name/entries/:entry", getEntryContent(collections))
+	e.GET("/api/collections/:name/entries/:entry/raw", getEntryRawFile(collections))
 	e.POST("/api/collections/:name/search", search(collections))
 	e.POST("/api/collections/:name/reset", reset(collections))
 	e.DELETE("/api/collections/:name/entry/delete", deleteEntryFromCollection(collections))
@@ -306,6 +307,30 @@ func getEntryContent(collections collectionList) func(c echo.Context) error {
 			"chunk_count": chunkCount,
 		})
 		return c.JSON(http.StatusOK, response)
+	}
+}
+
+// getEntryRawFile returns the original uploaded binary file.
+func getEntryRawFile(collections collectionList) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		name := c.Param("name")
+		collection, exists := collections[name]
+		if !exists {
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
+		}
+
+		entryParam := c.Param("entry")
+		entry, err := url.PathUnescape(entryParam)
+		if err != nil {
+			entry = entryParam
+		}
+
+		fpath, err := collection.GetEntryFilePath(entry)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Entry not found", fmt.Sprintf("Entry '%s' does not exist in collection '%s'", entry, name)))
+		}
+
+		return c.File(fpath)
 	}
 }
 

@@ -143,6 +143,24 @@ func (c *Client) GetEntryContent(collection, entry string) ([]EntryChunk, error)
 	return result.Data.Chunks, nil
 }
 
+// GetEntryRawFile returns the original uploaded binary file as a ReadCloser.
+// The caller is responsible for closing the returned ReadCloser.
+func (c *Client) GetEntryRawFile(collection, entry string) (io.ReadCloser, error) {
+	apiURL := fmt.Sprintf("%s/api/collections/%s/entries/%s/raw", c.BaseURL, collection, url.PathEscape(entry))
+
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("requesting raw file: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("raw file download failed (status %d)", resp.StatusCode)
+	}
+
+	return resp.Body, nil
+}
+
 // DeleteEntry deletes an Entry in a collection and return the entries left
 func (c *Client) DeleteEntry(collection, entry string) ([]string, error) {
 	url := fmt.Sprintf("%s/api/collections/%s/entry/delete", c.BaseURL, collection)
