@@ -481,16 +481,16 @@ func (p *PostgresDB) StoreDocuments(s []string, metadata map[string]string) ([]R
 
 	// Insert documents
 	for i, content := range s {
-		// Sanitize content to prevent invalid UTF-8 from reaching PostgreSQL
-		content = strings.ToValidUTF8(content, " ")
+		// Sanitize content to prevent invalid UTF-8 and null bytes from reaching PostgreSQL
+		content = strings.ReplaceAll(strings.ToValidUTF8(content, " "), "\x00", "")
 
 		embedding := resp.Data[i].Embedding
 		embeddingStr := formatVector(embedding)
 
 		// Extract title from metadata if available
-		title := strings.ToValidUTF8(metadata["title"], " ")
+		title := strings.ReplaceAll(strings.ToValidUTF8(metadata["title"], " "), "\x00", "")
 		if title == "" {
-			title = strings.ToValidUTF8(metadata["source"], " ")
+			title = strings.ReplaceAll(strings.ToValidUTF8(metadata["source"], " "), "\x00", "")
 		}
 
 		// Calculate word count

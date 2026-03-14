@@ -476,7 +476,9 @@ func fileToText(fpath string) (string, error) {
 		buf.ReadFrom(b)
 		// PDF extraction can produce invalid UTF-8 byte sequences that PostgreSQL rejects.
 		// Sanitize by replacing invalid sequences with the Unicode replacement character.
-		return strings.ToValidUTF8(buf.String(), " "), nil
+		text := strings.ToValidUTF8(buf.String(), " ")
+		text = strings.ReplaceAll(text, "\x00", "")
+		return text, nil
 	case ".txt", ".md":
 		f, err := os.Open(fpath)
 		if err != nil {
