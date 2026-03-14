@@ -295,14 +295,20 @@ func (db *PersistentKB) storeFile(entry string, metadata map[string]string) erro
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
 
+	// Files whose content cannot be text-extracted (audio, images, etc.) are
+	// stored as "raw-only" entries: the binary is kept in assetDir and the
+	// filename is indexed so it appears in ListDocuments() and can be served
+	// via GetEntryFilePath(), but no semantic chunks are created.
+	if !isChunkableFile(fileName) {
+		xlog.Info("Storing as raw-only entry (not semantically indexed)", "entry", entry, "fileName", fileName)
+		db.index[fileName] = nil
+		return db.save()
+	}
+
 	beforeCount := db.Engine.Count()
 	results, err := db.store(metadata, fileName)
 	if err != nil {
-		// File is already copied to assetDir. Index it with no chunks so it
-		// still appears in ListDocuments and can be served via GetEntryFilePath.
-		xlog.Warn("Chunking failed, storing file without chunks", "entry", entry, "error", err)
-		db.index[fileName] = nil
-		return db.save()
+		return fmt.Errorf("failed to store file: %w", err)
 	}
 	afterCount := db.Engine.Count()
 	xlog.Info("Stored file", "entry", entry, "fileName", fileName, "results_count", len(results), "count_before", beforeCount, "count_after", afterCount, "added_count", afterCount-beforeCount)
@@ -473,6 +479,19 @@ func copyFile(src, dst string) error {
 	}
 
 	return nil
+}
+
+// isChunkableFile reports whether the file type supports text extraction and
+// semantic chunking. Files that return false are stored as "raw-only" entries:
+// they are kept on disk and indexed so they appear in ListDocuments() and can
+// be served via GetEntryFilePath(), but they have no semantic chunks and will
+// not appear in search results.
+func isChunkableFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".pdf", ".txt", ".md":
+		return true
+	}
+	return false
 }
 
 // fileToText extracts the full text from a stored file (same logic as chunkFile but no splitting).
