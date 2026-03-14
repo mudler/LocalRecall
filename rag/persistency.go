@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/dslipak/pdf"
@@ -473,7 +474,9 @@ func fileToText(fpath string) (string, error) {
 			return "", err
 		}
 		buf.ReadFrom(b)
-		return buf.String(), nil
+		// PDF extraction can produce invalid UTF-8 byte sequences that PostgreSQL rejects.
+		// Sanitize by replacing invalid sequences with the Unicode replacement character.
+		return strings.ToValidUTF8(buf.String(), " "), nil
 	case ".txt", ".md":
 		f, err := os.Open(fpath)
 		if err != nil {
