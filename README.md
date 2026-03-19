@@ -153,7 +153,7 @@ docker run -d \
   -e POSTGRES_PASSWORD=localrecall \
   -p 5432:5432 \
   -v postgres_data:/var/lib/postgresql/data \
-  quay.io/mudler/localrecall:latest-postgresql
+  quay.io/mudler/localrecall:main-postgresql
 ```
 
 2. **Start LocalRecall** with PostgreSQL:
@@ -169,7 +169,7 @@ docker run -ti \
   -e HYBRID_SEARCH_BM25_WEIGHT=0.5 \
   -e HYBRID_SEARCH_VECTOR_WEIGHT=0.5 \
   -p 8080:8080 \
-  quay.io/mudler/localrecall
+  quay.io/mudler/localrecall:latest
 ```
 
 #### PostgreSQL Features
