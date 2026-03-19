@@ -264,10 +264,16 @@ func listFiles(collections collectionList) func(c echo.Context) error {
 			return c.JSON(http.StatusNotFound, errorResponse(ErrCodeNotFound, "Collection not found", fmt.Sprintf("Collection '%s' does not exist", name)))
 		}
 
-		entries := collection.ListDocuments()
+		keys := collection.ListDocuments()
+		// Return original filenames for backward compatibility
+		entries := make([]string, len(keys))
+		for i, k := range keys {
+			entries[i] = filepath.Base(k)
+		}
 		response := successResponse("Entries retrieved successfully", map[string]interface{}{
 			"collection": name,
 			"entries":    entries,
+			"keys":       keys,
 			"count":      len(entries),
 		})
 		return c.JSON(http.StatusOK, response)
@@ -357,29 +363,36 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		}
 		defer f.Close()
 
-		filePath := filepath.Join(fileAssets, file.Filename)
-		out, err := os.Create(filePath)
+		// Write to a temp file; collection.Store() will copy it into the
+		// correct UUID subdirectory under the collection's asset dir.
+		tmpFile, err := os.CreateTemp("", "localrecall-upload-*-"+file.Filename)
 		if err != nil {
-			xlog.Error("Failed to create file", err)
-			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to create file", err.Error()))
+			xlog.Error("Failed to create temp file", err)
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to create temp file", err.Error()))
 		}
-		defer out.Close()
+		tmpPath := tmpFile.Name()
+		defer os.Remove(tmpPath)
 
-		_, err = io.Copy(out, f)
+		_, err = io.Copy(tmpFile, f)
+		tmpFile.Close()
 		if err != nil {
 			xlog.Error("Failed to copy file", err)
 			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to copy file", err.Error()))
 		}
 
-		if collection.EntryExists(file.Filename) {
-			xlog.Info("Entry already exists")
-			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeConflict, "Entry already exists", fmt.Sprintf("File '%s' has already been uploaded to collection '%s'", file.Filename, name)))
+		// Rename the temp file so its base name matches the original filename,
+		// since collection.Store uses filepath.Base to derive the index key.
+		uploadPath := filepath.Join(filepath.Dir(tmpPath), file.Filename)
+		if err := os.Rename(tmpPath, uploadPath); err != nil {
+			xlog.Error("Failed to rename temp file", err)
+			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to rename temp file", err.Error()))
 		}
+		defer os.Remove(uploadPath)
 
 		now := time.Now().Format(time.RFC3339)
 
 		// Save the file to disk
-		err = collection.Store(filePath, map[string]string{"created_at": now})
+		err = collection.Store(uploadPath, map[string]string{"created_at": now})
 		if err != nil {
 			xlog.Error("Failed to store file", err)
 			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to store file", err.Error()))

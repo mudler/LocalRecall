@@ -24,7 +24,7 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 
 	persistentKB, err := NewPersistentCollectionKB(
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
-		filePath,
+		filepath.Join(filePath, collectionName),
 		chromemDB,
 		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
@@ -42,7 +42,7 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 
 	persistentKB, err := NewPersistentCollectionKB(
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
-		filePath,
+		filepath.Join(filePath, collectionName),
 		ragDB,
 		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
@@ -67,7 +67,7 @@ func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, d
 
 	persistentKB, err := NewPersistentCollectionKB(
 		filepath.Join(dbPath, fmt.Sprintf("%s%s.json", collectionPrefix, collectionName)),
-		filePath,
+		filepath.Join(filePath, collectionName),
 		postgresDB,
 		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
