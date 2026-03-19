@@ -605,7 +605,7 @@ func (p *PostgresDB) GetBySource(source string) ([]types.Result, error) {
 		var metadataJSON []byte
 
 		if err := rows.Scan(&r.ID, &title, &r.Content, &metadataJSON); err != nil {
-			continue
+			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 
 		r.Metadata = make(map[string]string)
@@ -617,6 +617,11 @@ func (p *PostgresDB) GetBySource(source string) ([]types.Result, error) {
 		}
 		results = append(results, r)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return results, nil
 }
 
