@@ -586,6 +586,40 @@ func (p *PostgresDB) GetByID(id string) (types.Result, error) {
 	return result, nil
 }
 
+func (p *PostgresDB) GetBySource(source string) ([]types.Result, error) {
+	ctx := context.Background()
+
+	rows, err := p.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id::text, COALESCE(title, '') as title, content, metadata
+		FROM %s WHERE metadata->>'source' = $1
+	`, p.tableName), source)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query by source: %w", err)
+	}
+	defer rows.Close()
+
+	var results []types.Result
+	for rows.Next() {
+		var r types.Result
+		var title string
+		var metadataJSON []byte
+
+		if err := rows.Scan(&r.ID, &title, &r.Content, &metadataJSON); err != nil {
+			continue
+		}
+
+		r.Metadata = make(map[string]string)
+		if len(metadataJSON) > 0 {
+			json.Unmarshal(metadataJSON, &r.Metadata)
+		}
+		if title != "" {
+			r.Metadata["title"] = title
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
 func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error) {
 	ctx := context.Background()
 

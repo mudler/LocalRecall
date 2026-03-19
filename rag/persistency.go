@@ -23,8 +23,7 @@ import (
 
 // CollectionState represents the persistent state of a collection
 type CollectionState struct {
-	ExternalSources []*ExternalSource          `json:"external_sources"`
-	Index           map[string][]engine.Result `json:"index"`
+	ExternalSources []*ExternalSource `json:"external_sources"`
 }
 
 type PersistentKB struct {
@@ -35,8 +34,6 @@ type PersistentKB struct {
 	maxChunkSize int
 	chunkOverlap int
 	sources      []*ExternalSource
-
-	index map[string][]engine.Result
 }
 
 func loadDB(path string) (*CollectionState, error) {
@@ -48,13 +45,24 @@ func loadDB(path string) (*CollectionState, error) {
 	state := &CollectionState{}
 	err = json.Unmarshal(data, state)
 	if err != nil {
+		// Handle legacy format (just an array of strings or old format with Index)
+		// Try to extract only external_sources from the raw JSON
+		var raw map[string]json.RawMessage
+		if err2 := json.Unmarshal(data, &raw); err2 == nil {
+			if esRaw, ok := raw["external_sources"]; ok {
+				var es []*ExternalSource
+				if err3 := json.Unmarshal(esRaw, &es); err3 == nil {
+					state.ExternalSources = es
+					return state, nil
+				}
+			}
+		}
 		// Handle legacy format (just an array of strings)
 		var legacyFiles []string
 		if err := json.Unmarshal(data, &legacyFiles); err != nil {
 			return nil, err
 		}
 		state.ExternalSources = []*ExternalSource{}
-		state.Index = map[string][]engine.Result{}
 	}
 
 	return state, nil
@@ -75,7 +83,6 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 			maxChunkSize: maxChunkSize,
 			chunkOverlap: chunkOverlap,
 			sources:      []*ExternalSource{},
-			index:        map[string][]engine.Result{},
 		}
 		persistentKB.Lock()
 		defer persistentKB.Unlock()
@@ -93,34 +100,83 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 		chunkOverlap: chunkOverlap,
 		assetDir:     assetDir,
 		sources:      state.ExternalSources,
-		index:        state.Index,
 	}
 
-	// Migrate flat index keys (no "/" in key) to UUID subdirectory layout.
+	// Migrate flat files in assetDir (files not in UUID subdirectories) to UUID layout.
 	if err := db.migrateToUUIDLayout(); err != nil {
 		xlog.Error("Failed to migrate to UUID layout", err)
 		return nil, err
 	}
 
-	// TODO: Automatically repopulate if embeddings dimensions are mismatching.
-	// To check if dimensions are mismatching, we can check the number of dimensions of the first embedding in the index if is the same as the
-	// dimension that the embedding model returns.
-	resp, err := llmClient.CreateEmbeddings(context.Background(),
-		openai.EmbeddingRequestStrings{
-			Input: []string{"test"},
-			Model: openai.EmbeddingModel(embeddingModel),
-		},
-	)
-	if err == nil && len(resp.Data) > 0 {
-		embedding := resp.Data[0].Embedding
-		embeddingDimensions, err := db.Engine.GetEmbeddingDimensions()
-		if err == nil && len(embedding) != embeddingDimensions {
-			xlog.Info("Embedding dimensions mismatch, repopulating", "embeddingDimensions", embeddingDimensions, "embedding", embedding)
-			return db, db.Repopulate()
+	// Automatically repopulate if embeddings dimensions are mismatching.
+	if llmClient != nil {
+		resp, err := llmClient.CreateEmbeddings(context.Background(),
+			openai.EmbeddingRequestStrings{
+				Input: []string{"test"},
+				Model: openai.EmbeddingModel(embeddingModel),
+			},
+		)
+		if err == nil && len(resp.Data) > 0 {
+			embedding := resp.Data[0].Embedding
+			embeddingDimensions, err := db.Engine.GetEmbeddingDimensions()
+			if err == nil && len(embedding) != embeddingDimensions {
+				xlog.Info("Embedding dimensions mismatch, repopulating", "embeddingDimensions", embeddingDimensions, "embedding", embedding)
+				return db, db.Repopulate()
+			}
 		}
 	}
 
 	return db, nil
+}
+
+// listDocumentKeys scans assetDir for UUID subdirectories containing files
+// and returns the keys in "uuid/filename" format.
+func (db *PersistentKB) listDocumentKeys() []string {
+	entries, err := os.ReadDir(db.assetDir)
+	if err != nil {
+		return nil
+	}
+
+	var keys []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		uuidDir := entry.Name()
+		subEntries, err := os.ReadDir(filepath.Join(db.assetDir, uuidDir))
+		if err != nil {
+			continue
+		}
+		for _, sub := range subEntries {
+			if !sub.IsDir() {
+				keys = append(keys, filepath.Join(uuidDir, sub.Name()))
+			}
+		}
+	}
+	return keys
+}
+
+// findEntryKey finds the filesystem key for a given entry name.
+// It checks for exact key match first, then falls back to base filename match.
+func (db *PersistentKB) findEntryKey(entry string) (string, bool) {
+	keys := db.listDocumentKeys()
+
+	// Direct key match
+	for _, k := range keys {
+		if k == entry {
+			return k, true
+		}
+	}
+
+	// Fall back to base filename match
+	base := filepath.Base(entry)
+	for _, k := range keys {
+		if filepath.Base(k) == base {
+			return k, true
+		}
+	}
+
+	return "", false
 }
 
 func (db *PersistentKB) Search(s string, similarEntries int) ([]types.Result, error) {
@@ -132,11 +188,9 @@ func (db *PersistentKB) Search(s string, similarEntries int) ([]types.Result, er
 
 func (db *PersistentKB) Reset() error {
 	db.Lock()
-	for f := range db.index {
-		os.RemoveAll(filepath.Join(db.assetDir, filepath.Dir(f)))
-	}
+	os.RemoveAll(db.assetDir)
+	os.MkdirAll(db.assetDir, 0755)
 	db.sources = []*ExternalSource{}
-	db.index = map[string][]engine.Result{}
 	db.save()
 	db.Unlock()
 	if err := db.Engine.Reset(); err != nil {
@@ -149,7 +203,6 @@ func (db *PersistentKB) Reset() error {
 func (db *PersistentKB) save() error {
 	state := &CollectionState{
 		ExternalSources: db.sources,
-		Index:           db.index,
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -168,18 +221,23 @@ func (db *PersistentKB) Count() int {
 
 // repopulate reinitializes the persistent knowledge base with the files that were added to it.
 func (db *PersistentKB) repopulate() error {
-
 	if err := db.Engine.Reset(); err != nil {
 		return fmt.Errorf("failed to reset engine: %w", err)
 	}
 
-	keys := []string{}
-	for f := range db.index {
-		keys = append(keys, f)
+	keys := db.listDocumentKeys()
+	// Only repopulate chunkable files
+	var chunkableKeys []string
+	for _, k := range keys {
+		if isChunkableFile(k) {
+			chunkableKeys = append(chunkableKeys, k)
+		}
 	}
 
-	if _, err := db.store(map[string]string{}, keys...); err != nil {
-		return fmt.Errorf("failed to store files: %w", err)
+	if len(chunkableKeys) > 0 {
+		if _, err := db.store(map[string]string{}, chunkableKeys...); err != nil {
+			return fmt.Errorf("failed to store files: %w", err)
+		}
 	}
 
 	return nil
@@ -193,61 +251,25 @@ func (db *PersistentKB) Repopulate() error {
 }
 
 // ListDocuments returns the list of documents in the knowledge base.
-// Each entry includes both the index key (uuid/filename) and the original filename.
+// Each entry includes the key (uuid/filename).
 func (db *PersistentKB) ListDocuments() []string {
 	db.Lock()
 	defer db.Unlock()
-	files := []string{}
-
-	for f := range db.index {
-		files = append(files, f)
-	}
-	return files
+	return db.listDocumentKeys()
 }
 
-// EntryExists checks if an entry with the given name exists in the index.
-// It searches by the full index key first, then falls back to matching by base filename.
+// EntryExists checks if an entry with the given name exists.
+// It searches by the full key first, then falls back to matching by base filename.
 func (db *PersistentKB) EntryExists(entry string) bool {
 	db.Lock()
 	defer db.Unlock()
 
-	// Direct key match
-	if _, ok := db.index[entry]; ok {
-		return true
-	}
-
-	// Fall back to base filename match
-	base := filepath.Base(entry)
-	for e := range db.index {
-		if filepath.Base(e) == base {
-			return true
-		}
-	}
-
-	return false
-}
-
-// findEntryKey finds the index key for a given entry name.
-// It checks for exact key match first, then falls back to base filename match.
-func (db *PersistentKB) findEntryKey(entry string) (string, bool) {
-	// Direct key match
-	if _, ok := db.index[entry]; ok {
-		return entry, true
-	}
-
-	// Fall back to base filename match
-	base := filepath.Base(entry)
-	for e := range db.index {
-		if filepath.Base(e) == base {
-			return e, true
-		}
-	}
-
-	return "", false
+	_, ok := db.findEntryKey(entry)
+	return ok
 }
 
 // GetEntryContent returns all chunks (content, id, metadata) for the given entry.
-// It uses the in-memory index and Engine.GetByID to resolve full chunk data.
+// It uses Engine.GetBySource to find chunks by source metadata.
 func (db *PersistentKB) GetEntryContent(entry string) ([]types.Result, error) {
 	db.Lock()
 	defer db.Unlock()
@@ -256,15 +278,10 @@ func (db *PersistentKB) GetEntryContent(entry string) ([]types.Result, error) {
 	if !ok {
 		return nil, fmt.Errorf("entry not found: %s", entry)
 	}
-	chunkResults := db.index[key]
 
-	results := make([]types.Result, 0, len(chunkResults))
-	for _, r := range chunkResults {
-		full, err := db.Engine.GetByID(r.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get chunk %s: %w", r.ID, err)
-		}
-		results = append(results, full)
+	results, err := db.Engine.GetBySource(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chunks for %s: %w", key, err)
 	}
 	return results, nil
 }
@@ -295,8 +312,12 @@ func (db *PersistentKB) GetEntryFileContent(entry string) (content string, chunk
 	if !ok {
 		return "", 0, fmt.Errorf("entry not found: %s", entry)
 	}
-	chunkResults := db.index[key]
-	chunkCount = len(chunkResults)
+
+	results, err := db.Engine.GetBySource(key)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to get chunks for %s: %w", key, err)
+	}
+	chunkCount = len(results)
 
 	fpath := filepath.Join(db.assetDir, key)
 	content, err = fileToText(fpath)
@@ -340,7 +361,6 @@ func (db *PersistentKB) storeFile(entry string, metadata map[string]string) erro
 	// via GetEntryFilePath(), but no semantic chunks are created.
 	if !isChunkableFile(fileName) {
 		xlog.Info("Storing as raw-only entry (not semantically indexed)", "entry", entry, "indexKey", indexKey)
-		db.index[indexKey] = nil
 		return db.save()
 	}
 
@@ -365,28 +385,19 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 	// Find the existing key by base filename (if any)
 	oldKey, hadExisting := db.findEntryKey(fileName)
 	if hadExisting {
-		oldResults := db.index[oldKey]
-		xlog.Info("Removing old chunks before storing new ones", "entry", oldKey, "old_chunk_count", len(oldResults))
+		xlog.Info("Removing old chunks before storing new ones", "entry", oldKey)
 
-		// Delete old chunks by their IDs before storing new ones
-		oldIDsToDelete := make([]string, 0, len(oldResults))
-		for _, oldResult := range oldResults {
-			oldIDsToDelete = append(oldIDsToDelete, oldResult.ID)
+		// Delete old chunks by source metadata
+		beforeDeleteCount := db.Engine.Count()
+		if err := db.Engine.Delete(map[string]string{"source": oldKey}, map[string]string{}); err != nil {
+			xlog.Error("Failed to delete old chunks", "error", err)
+			return fmt.Errorf("failed to delete old chunks: %w", err)
 		}
-
-		if len(oldIDsToDelete) > 0 {
-			beforeDeleteCount := db.Engine.Count()
-			if err := db.Engine.Delete(map[string]string{}, map[string]string{}, oldIDsToDelete...); err != nil {
-				xlog.Error("Failed to delete old chunks", "ids_count", len(oldIDsToDelete), "error", err)
-				return fmt.Errorf("failed to delete old chunks: %w", err)
-			}
-			afterDeleteCount := db.Engine.Count()
-			xlog.Info("Deleted old chunks", "entry", oldKey, "deleted_count", len(oldIDsToDelete), "count_before", beforeDeleteCount, "count_after", afterDeleteCount)
-		}
+		afterDeleteCount := db.Engine.Count()
+		xlog.Info("Deleted old chunks", "entry", oldKey, "count_before", beforeDeleteCount, "count_after", afterDeleteCount)
 
 		// Remove old file and UUID subdirectory
 		os.RemoveAll(filepath.Join(db.assetDir, filepath.Dir(oldKey)))
-		delete(db.index, oldKey)
 	}
 
 	// Now store the new chunks with a new UUID subdir
@@ -411,9 +422,9 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 	afterStoreCount := db.Engine.Count()
 	xlog.Info("Stored new chunks", "entry", indexKey, "new_chunk_count", len(results), "count_before", beforeCount, "count_after", afterStoreCount)
 
-	// Save the index
+	// Save state
 	if err := db.save(); err != nil {
-		return fmt.Errorf("failed to save index: %w", err)
+		return fmt.Errorf("failed to save state: %w", err)
 	}
 
 	return nil
@@ -443,7 +454,6 @@ func (db *PersistentKB) store(metadata map[string]string, indexKeys ...string) (
 			return nil, fmt.Errorf("stored %d chunks but expected %d for file: %s", len(res), len(pieces), key)
 		}
 		results = append(results, res...)
-		db.index[key] = results
 	}
 
 	return results, nil
@@ -460,7 +470,7 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 
 	xlog.Info("Removing entry", "entry", entry)
 
-	// Resolve the actual index key for this entry
+	// Resolve the actual key for this entry
 	key, found := db.findEntryKey(entry)
 	if !found {
 		return fmt.Errorf("entry not found: %s", entry)
@@ -471,31 +481,15 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 
 		// Get count before deletion for logging
 		beforeCount := db.Engine.Count()
-		xlog.Info("Deleting entry from engine", "entry", key, "chunks_in_index", len(db.index[key]), "total_count_before", beforeCount)
+		xlog.Info("Deleting entry from engine", "entry", key, "total_count_before", beforeCount)
 
 		if err := db.Engine.Delete(map[string]string{"source": key}, map[string]string{}); err != nil {
 			xlog.Error("Error deleting by source metadata", "error", err, "entry", key)
 			return err
 		}
 
-		// Make sure entries are deleted
-		for _, id := range db.index[key] {
-			res, err := db.Engine.GetByID(id.ID)
-			if err == nil {
-				xlog.Debug("Found remaining result", "result", res)
-				err := db.Engine.Delete(map[string]string{}, map[string]string{}, res.ID)
-				if err != nil {
-					xlog.Error("Error deleting by ID", "error", err, "id", res.ID)
-					return err
-				}
-			}
-		}
-
 		afterCount := db.Engine.Count()
 		xlog.Info("Deleted entry", "entry", key, "count_before", beforeCount, "count_after", afterCount, "deleted_count", beforeCount-afterCount)
-
-		xlog.Info("Deleting entry from index", "entry", key)
-		delete(db.index, key)
 
 		xlog.Info("Removing entry from disk", "file", e)
 		os.Remove(e)
@@ -509,7 +503,6 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 
 	// Remove the file and its UUID subdir
 	os.RemoveAll(filepath.Join(db.assetDir, filepath.Dir(key)))
-	delete(db.index, key)
 
 	// TODO: this is suboptimal, but currently chromem does not support deleting single entities
 	return db.repopulate()
@@ -599,13 +592,17 @@ func chunkFile(fpath string, maxchunksize, chunkOverlap int) ([]string, error) {
 	return chunks, nil
 }
 
-// migrateToUUIDLayout migrates flat index keys (e.g. "report.pdf") to UUID
-// subdirectory layout (e.g. "a1b2c3d4-.../report.pdf"). This is a one-time
-// migration that runs on load if any flat keys are detected.
+// migrateToUUIDLayout migrates flat files in assetDir (files not in UUID
+// subdirectories) to UUID subdirectory layout. This is a one-time migration.
 func (db *PersistentKB) migrateToUUIDLayout() error {
+	entries, err := os.ReadDir(db.assetDir)
+	if err != nil {
+		return nil // no assetDir yet
+	}
+
 	needsMigration := false
-	for key := range db.index {
-		if !strings.Contains(key, string(os.PathSeparator)) && !strings.Contains(key, "/") {
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			needsMigration = true
 			break
 		}
@@ -614,44 +611,35 @@ func (db *PersistentKB) migrateToUUIDLayout() error {
 		return nil
 	}
 
-	xlog.Info("Migrating flat index keys to UUID layout", "asset_dir", db.assetDir)
-	newIndex := make(map[string][]engine.Result, len(db.index))
+	xlog.Info("Migrating flat files to UUID layout", "asset_dir", db.assetDir)
 
-	for key, results := range db.index {
-		// Skip keys that already have UUID layout
-		if strings.Contains(key, string(os.PathSeparator)) || strings.Contains(key, "/") {
-			newIndex[key] = results
+	for _, entry := range entries {
+		if entry.IsDir() {
 			continue
 		}
-
+		fileName := entry.Name()
 		fileUUID := uuid.New().String()
-		newKey := filepath.Join(fileUUID, key)
 		uuidDir := filepath.Join(db.assetDir, fileUUID)
 
 		if err := os.MkdirAll(uuidDir, 0755); err != nil {
 			return fmt.Errorf("failed to create UUID dir during migration: %w", err)
 		}
 
-		oldPath := filepath.Join(db.assetDir, key)
-		newPath := filepath.Join(uuidDir, key)
+		oldPath := filepath.Join(db.assetDir, fileName)
+		newPath := filepath.Join(uuidDir, fileName)
 
-		if _, err := os.Stat(oldPath); err == nil {
-			data, err := os.ReadFile(oldPath)
-			if err != nil {
-				return fmt.Errorf("failed to read file during migration: %w", err)
-			}
-			if err := os.WriteFile(newPath, data, 0644); err != nil {
-				return fmt.Errorf("failed to write file during migration: %w", err)
-			}
-			os.Remove(oldPath)
+		data, err := os.ReadFile(oldPath)
+		if err != nil {
+			return fmt.Errorf("failed to read file during migration: %w", err)
 		}
-
-		newIndex[newKey] = results
-		xlog.Info("Migrated entry", "old_key", key, "new_key", newKey)
+		if err := os.WriteFile(newPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write file during migration: %w", err)
+		}
+		os.Remove(oldPath)
+		xlog.Info("Migrated entry", "old_key", fileName, "new_key", filepath.Join(fileUUID, fileName))
 	}
 
-	db.index = newIndex
-	return db.save()
+	return nil
 }
 
 // GetExternalSources returns the list of external sources for this collection

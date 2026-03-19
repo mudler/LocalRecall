@@ -82,7 +82,7 @@ var _ = Describe("Persistency", func() {
 
 			docs := kb.ListDocuments()
 			Expect(docs).To(HaveLen(1))
-			Expect(docs[0]).To(Equal("test.txt"))
+			Expect(docs[0]).To(ContainSubstring("test.txt"))
 		})
 
 		It("should remove an entry", func() {

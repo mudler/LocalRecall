@@ -14,4 +14,5 @@ type Engine interface {
 	Count() int
 	Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error
 	GetByID(id string) (types.Result, error)
+	GetBySource(source string) ([]types.Result, error)
 }
