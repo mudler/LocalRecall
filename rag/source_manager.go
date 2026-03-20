@@ -102,7 +102,10 @@ func (sm *SourceManager) RemoveSource(collectionName, url string) error {
 	}
 
 	if err := collection.RemoveEntry(fmt.Sprintf("source-%s-%s.txt", collectionName, sanitizeURL(url))); err != nil {
-		return err
+		// Ignore error if entry doesn't exist — content may never have been fetched
+		if !strings.Contains(err.Error(), "entry not found") {
+			return err
+		}
 	}
 
 	// Remove from in-memory sources

@@ -167,6 +167,32 @@ func (c *ChromemDB) GetByID(id string) (types.Result, error) {
 	return types.Result{ID: res.ID, Metadata: res.Metadata, Content: res.Content}, nil
 }
 
+func (c *ChromemDB) GetBySource(source string) ([]types.Result, error) {
+	ctx := context.Background()
+	count := c.collection.Count()
+	if count == 0 {
+		return nil, nil
+	}
+
+	// Use Query with a where filter to find documents by source metadata.
+	// We use a dummy query and request all documents, relying on the where
+	// filter to narrow results.
+	res, err := c.collection.Query(ctx, ".", count, map[string]string{"source": source}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error querying by source: %v", err)
+	}
+
+	var results []types.Result
+	for _, r := range res {
+		results = append(results, types.Result{
+			ID:       r.ID,
+			Metadata: r.Metadata,
+			Content:  r.Content,
+		})
+	}
+	return results, nil
+}
+
 func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error) {
 	res, err := c.collection.Query(context.Background(), s, similarEntries, nil, nil)
 	if err != nil {

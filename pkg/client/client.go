@@ -66,13 +66,20 @@ func (c *Client) ListCollections() ([]string, error) {
 		return nil, errors.New("failed to list collections")
 	}
 
-	var collections []string
-	err = json.NewDecoder(resp.Body).Decode(&collections)
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Data    struct {
+			Collections []string `json:"collections"`
+			Count       int      `json:"count"`
+		} `json:"data"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&apiResp)
 	if err != nil {
 		return nil, err
 	}
 
-	return collections, nil
+	return apiResp.Data.Collections, nil
 }
 
 // ListEntries lists all entries in a collection
@@ -132,7 +139,8 @@ func (c *Client) GetEntryContent(collection, entry string) ([]EntryChunk, error)
 
 	var result struct {
 		Data struct {
-			Chunks []EntryChunk `json:"chunks"`
+			Content    string `json:"content"`
+			ChunkCount int    `json:"chunk_count"`
 		} `json:"data"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&result)
@@ -140,7 +148,11 @@ func (c *Client) GetEntryContent(collection, entry string) ([]EntryChunk, error)
 		return nil, err
 	}
 
-	return result.Data.Chunks, nil
+	if result.Data.Content == "" {
+		return nil, nil
+	}
+
+	return []EntryChunk{{Content: result.Data.Content}}, nil
 }
 
 // GetEntryRawFile returns the original uploaded binary file as a ReadCloser.
@@ -196,13 +208,19 @@ func (c *Client) DeleteEntry(collection, entry string) ([]string, error) {
 		return nil, errors.New("failed to delete collection: " + bodyResult.String())
 	}
 
-	var results []string
-	err = json.NewDecoder(resp.Body).Decode(&results)
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Data    struct {
+			RemainingEntries []string `json:"remaining_entries"`
+		} `json:"data"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&apiResp)
 	if err != nil {
 		return nil, err
 	}
 
-	return results, nil
+	return apiResp.Data.RemainingEntries, nil
 }
 
 // Search searches a collection
@@ -229,13 +247,19 @@ func (c *Client) Search(collection, query string, maxResults int) ([]types.Resul
 		return nil, errors.New("failed to search collection")
 	}
 
-	var results []types.Result
-	err = json.NewDecoder(resp.Body).Decode(&results)
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Data    struct {
+			Results []types.Result `json:"results"`
+		} `json:"data"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&apiResp)
 	if err != nil {
 		return nil, err
 	}
 
-	return results, nil
+	return apiResp.Data.Results, nil
 }
 
 func (c *Client) Reset(collection string) error {
