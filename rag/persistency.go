@@ -442,6 +442,7 @@ func (db *PersistentKB) store(metadata map[string]string, indexKeys ...string) (
 		}
 		metadata["type"] = "file"
 		metadata["source"] = key
+		metadata["file_name"] = filepath.Base(key)
 		xlog.Info("Storing pieces", "pieces", len(pieces), "chunk_count", len(pieces), "indexKey", key, "metadata", metadata)
 		if len(pieces) == 0 {
 			return nil, fmt.Errorf("no chunks generated for file: %s", key)

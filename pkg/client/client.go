@@ -99,6 +99,7 @@ func (c *Client) ListEntries(collection string) ([]string, error) {
 	var result struct {
 		Data struct {
 			Entries []string `json:"entries"`
+			Keys    []string `json:"keys"`
 		} `json:"data"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&result)
@@ -106,6 +107,9 @@ func (c *Client) ListEntries(collection string) ([]string, error) {
 		return nil, err
 	}
 
+	if len(result.Data.Keys) > 0 {
+		return result.Data.Keys, nil
+	}
 	return result.Data.Entries, nil
 }
 
