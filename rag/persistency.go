@@ -328,21 +328,21 @@ func (db *PersistentKB) GetEntryFileContent(entry string) (content string, chunk
 }
 
 // Store stores an entry in the persistent knowledge base.
-func (db *PersistentKB) Store(entry string, metadata map[string]string) error {
+func (db *PersistentKB) Store(entry string, metadata map[string]string) (string, error) {
 	db.Lock()
 	defer db.Unlock()
 
 	return db.storeFile(entry, metadata)
 }
 
-func (db *PersistentKB) storeFile(entry string, metadata map[string]string) error {
+func (db *PersistentKB) storeFile(entry string, metadata map[string]string) (string, error) {
 	xlog.Info("Storing file", "entry", entry)
 	fileName := filepath.Base(entry)
 
 	// copy file to assetDir (if it's a file)
 	fileInfo, err := os.Stat(entry)
 	if err != nil {
-		return fmt.Errorf("file does not exist: %s", entry)
+		return "", fmt.Errorf("file does not exist: %s", entry)
 	}
 	xlog.Info("File info", "entry", entry, "size", fileInfo.Size())
 
@@ -352,7 +352,7 @@ func (db *PersistentKB) storeFile(entry string, metadata map[string]string) erro
 	destDir := filepath.Join(db.assetDir, fileUUID)
 
 	if err := copyFile(entry, destDir); err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
+		return "", fmt.Errorf("failed to copy file: %w", err)
 	}
 
 	// Files whose content cannot be text-extracted (audio, images, etc.) are
@@ -361,21 +361,21 @@ func (db *PersistentKB) storeFile(entry string, metadata map[string]string) erro
 	// via GetEntryFilePath(), but no semantic chunks are created.
 	if !isChunkableFile(fileName) {
 		xlog.Info("Storing as raw-only entry (not semantically indexed)", "entry", entry, "indexKey", indexKey)
-		return db.save()
+		return indexKey, db.save()
 	}
 
 	beforeCount := db.Engine.Count()
 	results, err := db.store(metadata, indexKey)
 	if err != nil {
-		return fmt.Errorf("failed to store file: %w", err)
+		return "", fmt.Errorf("failed to store file: %w", err)
 	}
 	afterCount := db.Engine.Count()
 	xlog.Info("Stored file", "entry", entry, "indexKey", indexKey, "results_count", len(results), "count_before", beforeCount, "count_after", afterCount, "added_count", afterCount-beforeCount)
 
-	return db.save()
+	return indexKey, db.save()
 }
 
-func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string) error {
+func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string) (string, error) {
 	xlog.Info("Storing or replacing entry", "entry", entry)
 	db.Lock()
 	defer db.Unlock()
@@ -391,7 +391,7 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 		beforeDeleteCount := db.Engine.Count()
 		if err := db.Engine.Delete(map[string]string{"source": oldKey}, map[string]string{}); err != nil {
 			xlog.Error("Failed to delete old chunks", "error", err)
-			return fmt.Errorf("failed to delete old chunks: %w", err)
+			return "", fmt.Errorf("failed to delete old chunks: %w", err)
 		}
 		afterDeleteCount := db.Engine.Count()
 		xlog.Info("Deleted old chunks", "entry", oldKey, "count_before", beforeDeleteCount, "count_after", afterDeleteCount)
@@ -402,7 +402,7 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 
 	// Now store the new chunks with a new UUID subdir
 	if _, err := os.Stat(entry); err != nil {
-		return fmt.Errorf("file does not exist: %s", entry)
+		return "", fmt.Errorf("file does not exist: %s", entry)
 	}
 
 	fileUUID := uuid.New().String()
@@ -410,24 +410,24 @@ func (db *PersistentKB) StoreOrReplace(entry string, metadata map[string]string)
 	destDir := filepath.Join(db.assetDir, fileUUID)
 
 	if err := copyFile(entry, destDir); err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
+		return "", fmt.Errorf("failed to copy file: %w", err)
 	}
 
 	// Store the new chunks
 	beforeCount := db.Engine.Count()
 	results, err := db.store(metadata, indexKey)
 	if err != nil {
-		return fmt.Errorf("failed to store file: %w", err)
+		return "", fmt.Errorf("failed to store file: %w", err)
 	}
 	afterStoreCount := db.Engine.Count()
 	xlog.Info("Stored new chunks", "entry", indexKey, "new_chunk_count", len(results), "count_before", beforeCount, "count_after", afterStoreCount)
 
 	// Save state
 	if err := db.save(); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
+		return "", fmt.Errorf("failed to save state: %w", err)
 	}
 
-	return nil
+	return indexKey, nil
 }
 
 func (db *PersistentKB) store(metadata map[string]string, indexKeys ...string) ([]engine.Result, error) {

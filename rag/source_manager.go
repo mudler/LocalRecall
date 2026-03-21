@@ -163,7 +163,7 @@ func (sm *SourceManager) updateSource(collectionName string, source *ExternalSou
 
 	// Store the content in the collection
 	// StoreOrReplace will use filepath.Base to get fileName, which matches our consistent naming
-	if err := collection.StoreOrReplace(tmpFile, map[string]string{"url": source.URL}); err != nil {
+	if _, err := collection.StoreOrReplace(tmpFile, map[string]string{"url": source.URL}); err != nil {
 		xlog.Error("Error storing content in collection", "error", err)
 		return
 	}

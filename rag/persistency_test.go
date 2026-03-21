@@ -141,7 +141,7 @@ var _ = Describe("PersistentKB", func() {
 		})
 
 		It("should return chunks for stored entry", func() {
-			err := kb.Store(testFile, map[string]string{"type": "test"})
+			_, err := kb.Store(testFile, map[string]string{"type": "test"})
 			Expect(err).ToNot(HaveOccurred())
 
 			results, err := kb.GetEntryContent("getcontent.txt")

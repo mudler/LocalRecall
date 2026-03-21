@@ -287,12 +287,12 @@ func (c *Client) Reset(collection string) error {
 }
 
 // Store uploads a file to a collection
-func (c *Client) Store(collection, filePath string) error {
+func (c *Client) Store(collection, filePath string) (string, error) {
 	url := fmt.Sprintf("%s/api/collections/%s/upload", c.BaseURL, collection)
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer file.Close()
 
@@ -301,29 +301,29 @@ func (c *Client) Store(collection, filePath string) error {
 
 	part, err := writer.CreateFormFile("file", file.Name())
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	_, err = io.Copy(part, file)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	err = writer.Close()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
@@ -338,11 +338,20 @@ func (c *Client) Store(collection, filePath string) error {
 		var r response
 		err = json.Unmarshal(b.Bytes(), &r)
 		if err == nil {
-			return errors.New("failed to upload file: " + r.Error)
+			return "", errors.New("failed to upload file: " + r.Error)
 		}
 
-		return errors.New("failed to upload file")
+		return "", errors.New("failed to upload file")
 	}
 
-	return nil
+	var successResp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
+		return "", nil // upload succeeded, just can't parse key
+	}
+	return successResp.Data.Key, nil
 }

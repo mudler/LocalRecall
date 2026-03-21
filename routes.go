@@ -392,7 +392,7 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		now := time.Now().Format(time.RFC3339)
 
 		// Save the file to disk
-		err = collection.Store(uploadPath, map[string]string{"created_at": now})
+		key, err := collection.Store(uploadPath, map[string]string{"created_at": now})
 		if err != nil {
 			xlog.Error("Failed to store file", err)
 			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to store file", err.Error()))
@@ -401,6 +401,7 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 		response := successResponse("File uploaded successfully", map[string]interface{}{
 			"filename":   file.Filename,
 			"collection": name,
+			"key":        key,
 			"created_at": now,
 		})
 		return c.JSON(http.StatusOK, response)

@@ -68,7 +68,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("hello.txt", "hello world")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 
 			docs := kb.ListDocuments()
 			Expect(docs).To(HaveLen(1))
@@ -81,7 +82,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 
 			Expect(kb.Count()).To(Equal(0))
 			f := createTxtFile("count.txt", "some content for counting")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kb.Count()).To(BeNumerically(">", 0))
 		})
 	})
@@ -98,7 +100,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("exists.txt", "data")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kb.EntryExists("exists.txt")).To(BeTrue())
 		})
 
@@ -107,7 +110,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("gone.txt", "data")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kb.EntryExists("gone.txt")).To(BeTrue())
 			Expect(kb.RemoveEntry("gone.txt")).To(Succeed())
 			Expect(kb.EntryExists("gone.txt")).To(BeFalse())
@@ -129,7 +133,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("content.txt", "the quick brown fox jumps over the lazy dog")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 
 			results, err := kb.GetEntryContent("content.txt")
 			Expect(err).ToNot(HaveOccurred())
@@ -157,7 +162,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("filecontent.txt", "hello file content test")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 
 			content, chunks, err := kb.GetEntryFileContent("filecontent.txt")
 			Expect(err).ToNot(HaveOccurred())
@@ -180,7 +186,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("pathtest.txt", "path content")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 
 			p, err := kb.GetEntryFilePath("pathtest.txt")
 			Expect(err).ToNot(HaveOccurred())
@@ -194,12 +201,14 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f1 := createTxtFile("replace.txt", "original content here")
-			Expect(kb.Store(f1, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f1, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			countAfterFirst := kb.Count()
 
 			// Overwrite the temp file with new content
 			f2 := createTxtFile("replace.txt", "replaced content now")
-			Expect(kb.StoreOrReplace(f2, map[string]string{})).To(Succeed())
+			_, err = kb.StoreOrReplace(f2, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 
 			docs := kb.ListDocuments()
 			Expect(docs).To(HaveLen(1))
@@ -224,7 +233,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("removeme.txt", "remove me please")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kb.ListDocuments()).ToNot(BeEmpty())
 			Expect(kb.Count()).To(BeNumerically(">", 0))
 
@@ -240,7 +250,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("reset.txt", "to be reset")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kb.ListDocuments()).ToNot(BeEmpty())
 
 			Expect(kb.Reset()).To(Succeed())
@@ -258,7 +269,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("repop.txt", "repopulate me")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			countBefore := kb.Count()
 			Expect(countBefore).To(BeNumerically(">", 0))
 
@@ -273,7 +285,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			f := createTxtFile("searchme.txt", "unique searchable content xyzzy")
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 
 			results, err := kb.Search("xyzzy", 10)
 			Expect(err).ToNot(HaveOccurred())
@@ -320,7 +333,8 @@ var _ = Describe("PersistentKB with MockEngine", func() {
 			f := filepath.Join(tempDir, "photo.png")
 			Expect(os.WriteFile(f, []byte("fakepng"), 0644)).To(Succeed())
 
-			Expect(kb.Store(f, map[string]string{})).To(Succeed())
+			_, err = kb.Store(f, map[string]string{})
+			Expect(err).ToNot(HaveOccurred())
 			docs := kb.ListDocuments()
 			Expect(docs).To(HaveLen(1))
 			Expect(filepath.Base(docs[0])).To(Equal("photo.png"))

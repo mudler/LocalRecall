@@ -77,7 +77,7 @@ var _ = Describe("Persistency", func() {
 
 		It("should store and retrieve a document", func() {
 			metadata := map[string]string{"type": "test"}
-			err := kb.Store(testFile, metadata)
+			_, err := kb.Store(testFile, metadata)
 			Expect(err).To(BeNil())
 
 			docs := kb.ListDocuments()
@@ -87,7 +87,7 @@ var _ = Describe("Persistency", func() {
 
 		It("should remove an entry", func() {
 			metadata := map[string]string{"type": "test"}
-			err := kb.Store(testFile, metadata)
+			_, err := kb.Store(testFile, metadata)
 			Expect(err).To(BeNil())
 
 			err = kb.RemoveEntry("test.txt")
@@ -99,14 +99,14 @@ var _ = Describe("Persistency", func() {
 
 		It("should store or replace an existing document", func() {
 			metadata := map[string]string{"type": "test"}
-			err := kb.Store(testFile, metadata)
+			_, err := kb.Store(testFile, metadata)
 			Expect(err).To(BeNil())
 
 			// Modify the test file
 			err = os.WriteFile(testFile, []byte("This is an updated test document"), 0644)
 			Expect(err).To(BeNil())
 
-			err = kb.StoreOrReplace(testFile, metadata)
+			_, err = kb.StoreOrReplace(testFile, metadata)
 			Expect(err).To(BeNil())
 
 			docs := kb.ListDocuments()
@@ -116,7 +116,7 @@ var _ = Describe("Persistency", func() {
 
 		It("should get entry content", func() {
 			metadata := map[string]string{"type": "test"}
-			err := kb.Store(testFile, metadata)
+			_, err := kb.Store(testFile, metadata)
 			Expect(err).To(BeNil())
 
 			results, err := kb.GetEntryContent("test.txt")
@@ -176,7 +176,7 @@ var _ = Describe("Persistency", func() {
 			Expect(err).To(BeNil())
 
 			metadata := map[string]string{"type": "test"}
-			err = kb.Store(testFile, metadata)
+			_, err = kb.Store(testFile, metadata)
 			Expect(err).To(BeNil())
 
 			// Reset

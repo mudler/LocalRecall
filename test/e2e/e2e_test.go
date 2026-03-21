@@ -181,7 +181,7 @@ func tempContent(content string, localRecall *client.Client) string {
 	_, err = ff.WriteString(content)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
-	err = localRecall.Store(TestCollection, ff.Name())
+	_, err = localRecall.Store(TestCollection, ff.Name())
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
 	return fileName
