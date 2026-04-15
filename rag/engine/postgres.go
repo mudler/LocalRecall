@@ -212,38 +212,52 @@ func (p *PostgresDB) setupDatabase() error {
 		return fmt.Errorf("failed to create BM25 index (required for hybrid search): %w", err)
 	}
 
-	// Vector index (try DiskANN first if vectorscale is available, fallback to HNSW)
-	if vectorscaleInstalled {
-		_, err = p.pool.Exec(ctx, fmt.Sprintf(`
-			CREATE INDEX IF NOT EXISTS idx_%s_embedding ON %s 
-			USING diskann(embedding)
-		`, p.tableName, p.tableName))
-		if err != nil {
-			xlog.Warn("Failed to create DiskANN index, trying HNSW", "error", err)
-			_, err = p.pool.Exec(ctx, fmt.Sprintf(`
-				CREATE INDEX IF NOT EXISTS idx_%s_embedding ON %s 
-				USING hnsw(embedding vector_cosine_ops)
-			`, p.tableName, p.tableName))
-			if err != nil {
-				xlog.Warn("Failed to create HNSW index", "error", err)
-			}
-		} else {
-			xlog.Info("Created DiskANN index for vector search")
-		}
-	} else {
-		// vectorscale not available, use HNSW from pgvector
-		_, err = p.pool.Exec(ctx, fmt.Sprintf(`
-			CREATE INDEX IF NOT EXISTS idx_%s_embedding ON %s 
-			USING hnsw(embedding vector_cosine_ops)
-		`, p.tableName, p.tableName))
-		if err != nil {
-			xlog.Warn("Failed to create HNSW index", "error", err)
-		} else {
-			xlog.Info("Created HNSW index for vector search (pgvector)")
-		}
+	if err := p.createVectorIndex(ctx, vectorscaleInstalled); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+// createVectorIndex creates the vector similarity index on the embedding column.
+// It is idempotent (uses IF NOT EXISTS) so it is safe to call from both
+// setupDatabase() at startup and from checkAndRecalculateEmbeddings() after a
+// dimension migration that recreated the column.
+func (p *PostgresDB) createVectorIndex(ctx context.Context, vectorscaleInstalled bool) error {
+	indexName := fmt.Sprintf("idx_%s_embedding", p.tableName)
+
+	if vectorscaleInstalled {
+		_, err := p.pool.Exec(ctx, fmt.Sprintf(`
+			CREATE INDEX IF NOT EXISTS %s ON %s
+			USING diskann(embedding)
+		`, indexName, p.tableName))
+		if err == nil {
+			xlog.Info("Created DiskANN index for vector search")
+			return nil
+		}
+		xlog.Warn("Failed to create DiskANN index, trying HNSW", "error", err)
+	}
+
+	_, err := p.pool.Exec(ctx, fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS %s ON %s
+		USING hnsw(embedding vector_cosine_ops)
+	`, indexName, p.tableName))
+	if err != nil {
+		xlog.Warn("Failed to create HNSW index", "error", err)
+		return nil
+	}
+	xlog.Info("Created HNSW index for vector search (pgvector)")
+	return nil
+}
+
+// isVectorscaleInstalled returns true when the vectorscale (or pgvectorscale)
+// extension is available in the current database.
+func (p *PostgresDB) isVectorscaleInstalled(ctx context.Context) bool {
+	var extName string
+	err := p.pool.QueryRow(ctx,
+		"SELECT extname FROM pg_extension WHERE extname IN ('vectorscale', 'pgvectorscale') LIMIT 1",
+	).Scan(&extName)
+	return err == nil
 }
 
 func (p *PostgresDB) checkAndRecalculateEmbeddings() error {
@@ -253,8 +267,8 @@ func (p *PostgresDB) checkAndRecalculateEmbeddings() error {
 	var storedModel string
 	var storedDims int
 	err := p.pool.QueryRow(ctx, `
-		SELECT embedding_model, embedding_dimensions 
-		FROM collection_config 
+		SELECT embedding_model, embedding_dimensions
+		FROM collection_config
 		WHERE collection_name = $1
 	`, p.collectionName).Scan(&storedModel, &storedDims)
 
@@ -270,87 +284,146 @@ func (p *PostgresDB) checkAndRecalculateEmbeddings() error {
 		return fmt.Errorf("failed to query collection config: %w", err)
 	}
 
-	// Check if model or dimensions changed
-	if storedModel != p.embeddingsModel || storedDims != p.embeddingDims {
-		xlog.Info("Embedding model changed, recalculating embeddings",
-			"collection", p.collectionName,
-			"old_model", storedModel,
-			"new_model", p.embeddingsModel,
-			"old_dims", storedDims,
-			"new_dims", p.embeddingDims)
+	if storedModel == p.embeddingsModel && storedDims == p.embeddingDims {
+		return nil
+	}
 
-		// Get all documents that need recalculation
-		rows, err := p.pool.Query(ctx, fmt.Sprintf(`
-			SELECT id, full_text FROM %s WHERE embedding IS NOT NULL
-		`, p.tableName))
-		if err != nil {
-			return fmt.Errorf("failed to query documents: %w", err)
+	xlog.Info("Embedding model changed, migrating collection",
+		"collection", p.collectionName,
+		"old_model", storedModel,
+		"new_model", p.embeddingsModel,
+		"old_dims", storedDims,
+		"new_dims", p.embeddingDims)
+
+	return p.migrateEmbeddingDimensions(ctx)
+}
+
+// migrateEmbeddingDimensions rebuilds the vector column at the new
+// dimensionality and re-embeds every stored document with the current model.
+//
+// pgvector does not support resizing a VECTOR column in place, so we have to
+// DROP the column (and its index) and re-ADD it. To make sure the collection
+// is never left half-migrated, all schema mutations and the per-row UPDATEs
+// run inside a single transaction and we only commit once every embedding has
+// been generated successfully — if anything fails (embedder outage, network
+// blip, etc.) the rollback restores the previous column and indexes intact.
+func (p *PostgresDB) migrateEmbeddingDimensions(ctx context.Context) error {
+	// Pull all (id, full_text) outside the transaction — full_text is a
+	// generated column, the read is independent and we don't want to keep
+	// a long cursor open while we call out to the embedder.
+	rows, err := p.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id, full_text FROM %s
+	`, p.tableName))
+	if err != nil {
+		return fmt.Errorf("failed to query documents for migration: %w", err)
+	}
+	var docIDs []int
+	var texts []string
+	for rows.Next() {
+		var id int
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan document during migration: %w", err)
 		}
-		defer rows.Close()
+		docIDs = append(docIDs, id)
+		texts = append(texts, text)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to iterate documents during migration: %w", err)
+	}
 
-		var docIDs []int
-		var texts []string
-		for rows.Next() {
-			var id int
-			var text string
-			if err := rows.Scan(&id, &text); err != nil {
-				continue
+	// Re-embed everything *before* touching the schema: if the new embedder
+	// is broken, we want to discover that while the old column is still
+	// healthy and queryable.
+	newEmbeddings := make(map[int]string, len(texts))
+	if len(texts) > 0 {
+		batchSize := 10
+		for i := 0; i < len(texts); i += batchSize {
+			end := i + batchSize
+			if end > len(texts) {
+				end = len(texts)
 			}
-			docIDs = append(docIDs, id)
-			texts = append(texts, text)
-		}
+			batchTexts := texts[i:end]
+			batchIDs := docIDs[i:end]
 
-		if len(texts) > 0 {
-			// Generate new embeddings in batches
-			batchSize := 10
-			for i := 0; i < len(texts); i += batchSize {
-				end := i + batchSize
-				if end > len(texts) {
-					end = len(texts)
-				}
-
-				batchTexts := texts[i:end]
-				batchIDs := docIDs[i:end]
-
-				// Generate embeddings
-				resp, err := p.client.CreateEmbeddings(ctx,
-					openai.EmbeddingRequestStrings{
-						Input: batchTexts,
-						Model: openai.EmbeddingModel(p.embeddingsModel),
-					},
-				)
-				if err != nil {
-					xlog.Warn("Failed to generate embeddings batch", "error", err)
-					continue
-				}
-
-				// Update embeddings in database
-				for j, embedding := range resp.Data {
-					if j >= len(batchIDs) {
-						break
-					}
-					embeddingStr := formatVector(embedding.Embedding)
-					_, err = p.pool.Exec(ctx, fmt.Sprintf(`
-						UPDATE %s SET embedding = $1::vector WHERE id = $2
-					`, p.tableName), embeddingStr, batchIDs[j])
-					if err != nil {
-						xlog.Warn("Failed to update embedding", "id", batchIDs[j], "error", err)
-					}
-				}
+			resp, err := p.client.CreateEmbeddings(ctx,
+				openai.EmbeddingRequestStrings{
+					Input: batchTexts,
+					Model: openai.EmbeddingModel(p.embeddingsModel),
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("failed to generate embeddings during migration: %w", err)
 			}
-		}
-
-		// Update collection config
-		_, err = p.pool.Exec(ctx, `
-			UPDATE collection_config 
-			SET embedding_model = $1, embedding_dimensions = $2, updated_at = NOW()
-			WHERE collection_name = $3
-		`, p.embeddingsModel, p.embeddingDims, p.collectionName)
-		if err != nil {
-			return fmt.Errorf("failed to update collection config: %w", err)
+			if len(resp.Data) != len(batchTexts) {
+				return fmt.Errorf("embedding count mismatch during migration: expected %d, got %d", len(batchTexts), len(resp.Data))
+			}
+			for j, embedding := range resp.Data {
+				if len(embedding.Embedding) != p.embeddingDims {
+					return fmt.Errorf("embedding dimension mismatch during migration: expected %d, got %d", p.embeddingDims, len(embedding.Embedding))
+				}
+				newEmbeddings[batchIDs[j]] = formatVector(embedding.Embedding)
+			}
 		}
 	}
 
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin migration transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Drop the vector index that depends on the old column. We use the same
+	// name createVectorIndex() will use when recreating it below.
+	_, err = tx.Exec(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS idx_%s_embedding`, p.tableName))
+	if err != nil {
+		return fmt.Errorf("failed to drop vector index during migration: %w", err)
+	}
+	_, err = tx.Exec(ctx, fmt.Sprintf(`ALTER TABLE %s DROP COLUMN embedding`, p.tableName))
+	if err != nil {
+		return fmt.Errorf("failed to drop embedding column during migration: %w", err)
+	}
+	_, err = tx.Exec(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN embedding vector(%d)`, p.tableName, p.embeddingDims))
+	if err != nil {
+		return fmt.Errorf("failed to add new embedding column during migration: %w", err)
+	}
+
+	for id, embeddingStr := range newEmbeddings {
+		_, err = tx.Exec(ctx, fmt.Sprintf(`
+			UPDATE %s SET embedding = $1::vector WHERE id = $2
+		`, p.tableName), embeddingStr, id)
+		if err != nil {
+			return fmt.Errorf("failed to write re-embedded vector for id=%d: %w", id, err)
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE collection_config
+		SET embedding_model = $1, embedding_dimensions = $2, updated_at = NOW()
+		WHERE collection_name = $3
+	`, p.embeddingsModel, p.embeddingDims, p.collectionName)
+	if err != nil {
+		return fmt.Errorf("failed to update collection config during migration: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit migration transaction: %w", err)
+	}
+
+	// Recreate the vector index outside the transaction. Index builds can be
+	// expensive and don't need to be atomic with the data swap — the column
+	// already exists at the right dimensionality and queries work without an
+	// index, just slower.
+	if err := p.createVectorIndex(ctx, p.isVectorscaleInstalled(ctx)); err != nil {
+		xlog.Warn("Failed to recreate vector index after migration", "error", err)
+	}
+
+	xlog.Info("Embedding migration complete",
+		"collection", p.collectionName,
+		"documents", len(newEmbeddings),
+		"new_dims", p.embeddingDims)
 	return nil
 }
 
