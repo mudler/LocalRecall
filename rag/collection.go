@@ -14,12 +14,13 @@ import (
 
 const collectionPrefix = "collection-"
 
-// NewPersistentChromeCollection creates a new persistent knowledge base collection using the ChromemDB engine
-func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int) *PersistentKB {
+// NewPersistentChromeCollection creates a new persistent knowledge base collection using the ChromemDB engine.
+// Returns an error instead of exiting so embedded callers (long-running servers) can degrade gracefully
+// when the engine or embedding service is transiently unavailable.
+func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int) (*PersistentKB, error) {
 	chromemDB, err := engine.NewChromemDBCollection(collectionName, dbPath, llmClient, embeddingModel)
 	if err != nil {
-		xlog.Error("Failed to create ChromemDB", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("create ChromemDB: %w", err)
 	}
 
 	persistentKB, err := NewPersistentCollectionKB(
@@ -28,15 +29,15 @@ func NewPersistentChromeCollection(llmClient *openai.Client, collectionName, dbP
 		chromemDB,
 		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
-		xlog.Error("Failed to create PersistentKB", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("create PersistentKB: %w", err)
 	}
 
-	return persistentKB
+	return persistentKB, nil
 }
 
-// NewPersistentLocalAICollection creates a new persistent knowledge base collection using the LocalAI stores engine
-func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int) *PersistentKB {
+// NewPersistentLocalAICollection creates a new persistent knowledge base collection using the LocalAI stores engine.
+// Returns an error instead of exiting so embedded callers can degrade gracefully on transient failures.
+func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int) (*PersistentKB, error) {
 	laiStore := localai.NewStoreClient(apiURL, apiKey)
 	ragDB := engine.NewLocalAIRAGDB(laiStore, llmClient, embeddingModel)
 
@@ -46,23 +47,23 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 		ragDB,
 		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
-		xlog.Error("Failed to create PersistentKB", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("create PersistentKB: %w", err)
 	}
 
 	// TODO: This does not work as we do not have .Reset().
 	// The problem is that LocalAI stores are not persistent either and do not allow upserts.
 	persistentKB.Repopulate()
 
-	return persistentKB
+	return persistentKB, nil
 }
 
-// NewPersistentPostgresCollection creates a new persistent knowledge base collection using the PostgreSQL engine
-func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int, databaseURL string) *PersistentKB {
+// NewPersistentPostgresCollection creates a new persistent knowledge base collection using the PostgreSQL engine.
+// Returns an error instead of exiting so embedded callers can degrade gracefully when the embedding service
+// or PostgreSQL is transiently unavailable.
+func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int, databaseURL string) (*PersistentKB, error) {
 	postgresDB, err := engine.NewPostgresDBCollection(collectionName, databaseURL, llmClient, embeddingModel)
 	if err != nil {
-		xlog.Error("Failed to create PostgresDB", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("create PostgresDB: %w", err)
 	}
 
 	persistentKB, err := NewPersistentCollectionKB(
@@ -71,11 +72,10 @@ func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, d
 		postgresDB,
 		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
-		xlog.Error("Failed to create PersistentKB", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("create PersistentKB: %w", err)
 	}
 
-	return persistentKB
+	return persistentKB, nil
 }
 
 // ListAllCollections lists all collections in the database

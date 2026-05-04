@@ -68,13 +68,17 @@ func newVectorEngine(
 	vectorEngineType string,
 	llmClient *openai.Client,
 	apiURL, apiKey, collectionName, dbPath, embeddingModel string, maxChunkSize, chunkOverlap int) *rag.PersistentKB {
+	var (
+		kb  *rag.PersistentKB
+		err error
+	)
 	switch vectorEngineType {
 	case "chromem":
 		xlog.Info("Chromem collection", "collectionName", collectionName, "dbPath", dbPath)
-		return rag.NewPersistentChromeCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap)
+		kb, err = rag.NewPersistentChromeCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap)
 	case "localai":
 		xlog.Info("LocalAI collection", "collectionName", collectionName, "apiURL", apiURL)
-		return rag.NewPersistentLocalAICollection(llmClient, apiURL, apiKey, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap)
+		kb, err = rag.NewPersistentLocalAICollection(llmClient, apiURL, apiKey, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap)
 	case "postgres":
 		databaseURL := os.Getenv("DATABASE_URL")
 		if databaseURL == "" {
@@ -82,13 +86,22 @@ func newVectorEngine(
 			os.Exit(1)
 		}
 		xlog.Info("PostgreSQL collection", "collectionName", collectionName, "databaseURL", databaseURL)
-		return rag.NewPersistentPostgresCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap, databaseURL)
+		kb, err = rag.NewPersistentPostgresCollection(llmClient, collectionName, dbPath, fileAssets, embeddingModel, maxChunkSize, chunkOverlap, databaseURL)
 	default:
 		xlog.Error("Unknown vector engine", "engine", vectorEngineType)
 		os.Exit(1)
 	}
 
-	return nil
+	// LocalRecall standalone server: a startup-time engine init failure is
+	// non-recoverable in this mode (no fallback or retry path), so preserve
+	// the original fail-fast behavior. Embedded callers (LocalAGI/LocalAI)
+	// get the error directly from the rag.NewPersistent* constructors and
+	// can choose to degrade gracefully.
+	if err != nil {
+		xlog.Error("Failed to create collection", "engine", vectorEngineType, "collection", collectionName, "error", err)
+		os.Exit(1)
+	}
+	return kb
 }
 
 // API routes for managing collections
