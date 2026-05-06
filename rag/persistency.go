@@ -1,18 +1,19 @@
 package rag
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/dslipak/pdf"
+	"github.com/gen2brain/go-fitz"
 	"github.com/google/uuid"
 	"github.com/mudler/localrecall/pkg/chunk"
 	"github.com/mudler/localrecall/rag/engine"
@@ -541,6 +542,82 @@ func isChunkableFile(path string) bool {
 	return false
 }
 
+// defaultPDFExtractTimeout is the wall-clock cap on a single PDF text
+// extraction. Even libmupdf occasionally takes a long time on adversarial
+// PDFs (deeply nested pages, broken xref tables, scanned-only files
+// without an OCR layer). A 60s cap means a single bad PDF can't poison
+// the upload queue; the request fails with a clear error and the user
+// can skip / retry. Override via LOCALRECALL_PDF_EXTRACT_TIMEOUT (a
+// duration string, e.g. "120s", "2m").
+const defaultPDFExtractTimeout = 60 * time.Second
+
+func pdfExtractTimeout() time.Duration {
+	if v := os.Getenv("LOCALRECALL_PDF_EXTRACT_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		// Allow a bare integer in seconds as a convenience.
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultPDFExtractTimeout
+}
+
+// extractPDFText opens fpath via go-fitz (libmupdf bindings) and joins
+// the per-page text into a single string. Runs the extraction on a
+// goroutine with a wall-clock timeout: libmupdf is far more robust than
+// the previous dslipak/pdf parser (which could hang indefinitely on
+// certain xref layouts), but we still cap it for safety. If the
+// timeout fires the goroutine continues until libmupdf returns, then is
+// GC'd — the caller does not block waiting for it.
+func extractPDFText(fpath string) (string, error) {
+	type result struct {
+		text string
+		err  error
+	}
+	ch := make(chan result, 1)
+
+	go func() {
+		doc, err := fitz.New(fpath)
+		if err != nil {
+			ch <- result{err: fmt.Errorf("opening pdf: %w", err)}
+			return
+		}
+		defer doc.Close()
+
+		var sb strings.Builder
+		for i := 0; i < doc.NumPage(); i++ {
+			pageText, perr := doc.Text(i)
+			if perr != nil {
+				ch <- result{err: fmt.Errorf("extracting page %d: %w", i+1, perr)}
+				return
+			}
+			sb.WriteString(pageText)
+			if i+1 < doc.NumPage() {
+				sb.WriteString("\n\n")
+			}
+		}
+		ch <- result{text: sb.String()}
+	}()
+
+	timeout := pdfExtractTimeout()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return "", r.err
+		}
+		// PDF extraction can still produce invalid UTF-8 byte sequences
+		// that PostgreSQL rejects (and null bytes that some tooling
+		// chokes on). Sanitize before returning.
+		text := strings.ToValidUTF8(r.text, " ")
+		text = strings.ReplaceAll(text, "\x00", "")
+		return text, nil
+	case <-time.After(timeout):
+		return "", fmt.Errorf("pdf extraction timed out after %s", timeout)
+	}
+}
+
 // fileToText extracts the full text from a stored file (same logic as chunkFile but no splitting).
 // Used by GetEntryFileContent to return content without chunk overlap.
 func fileToText(fpath string) (string, error) {
@@ -550,21 +627,7 @@ func fileToText(fpath string) (string, error) {
 	extension := filepath.Ext(fpath)
 	switch extension {
 	case ".pdf":
-		r, err := pdf.Open(fpath)
-		if err != nil {
-			return "", err
-		}
-		var buf bytes.Buffer
-		b, err := r.GetPlainText()
-		if err != nil {
-			return "", err
-		}
-		buf.ReadFrom(b)
-		// PDF extraction can produce invalid UTF-8 byte sequences that PostgreSQL rejects.
-		// Sanitize by replacing invalid sequences with the Unicode replacement character.
-		text := strings.ToValidUTF8(buf.String(), " ")
-		text = strings.ReplaceAll(text, "\x00", "")
-		return text, nil
+		return extractPDFText(fpath)
 	case ".txt", ".md":
 		f, err := os.Open(fpath)
 		if err != nil {
