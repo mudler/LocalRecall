@@ -13,8 +13,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gen2brain/go-fitz"
 	"github.com/google/uuid"
+	"github.com/klippa-app/go-pdfium"
+	"github.com/klippa-app/go-pdfium/requests"
+	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/mudler/localrecall/pkg/chunk"
 	"github.com/mudler/localrecall/rag/engine"
 	"github.com/mudler/localrecall/rag/types"
@@ -543,12 +545,12 @@ func isChunkableFile(path string) bool {
 }
 
 // defaultPDFExtractTimeout is the wall-clock cap on a single PDF text
-// extraction. Even libmupdf occasionally takes a long time on adversarial
-// PDFs (deeply nested pages, broken xref tables, scanned-only files
-// without an OCR layer). A 60s cap means a single bad PDF can't poison
-// the upload queue; the request fails with a clear error and the user
-// can skip / retry. Override via LOCALRECALL_PDF_EXTRACT_TIMEOUT (a
-// duration string, e.g. "120s", "2m").
+// extraction. PDFium is much harder to wedge than the previous dslipak/pdf
+// parser (which had no timeout and could block indefinitely), but a
+// pathological PDF can still take a long time to scan; cap it so a
+// single bad file can't poison the upload queue. Override via
+// LOCALRECALL_PDF_EXTRACT_TIMEOUT ("120s", "2m", or a bare integer in
+// seconds).
 const defaultPDFExtractTimeout = 60 * time.Second
 
 func pdfExtractTimeout() time.Duration {
@@ -564,13 +566,37 @@ func pdfExtractTimeout() time.Duration {
 	return defaultPDFExtractTimeout
 }
 
-// extractPDFText opens fpath via go-fitz (libmupdf bindings) and joins
-// the per-page text into a single string. Runs the extraction on a
-// goroutine with a wall-clock timeout: libmupdf is far more robust than
-// the previous dslipak/pdf parser (which could hang indefinitely on
-// certain xref layouts), but we still cap it for safety. If the
-// timeout fires the goroutine continues until libmupdf returns, then is
-// GC'd — the caller does not block waiting for it.
+// pdfium pool — initialised lazily on the first PDF extraction so
+// importers that never touch a PDF don't pay the WASM startup cost.
+// We use the WebAssembly backend (PDFium compiled to WASM, embedded in
+// the Go binary) which means: no cgo, no static-libmupdf linking, no
+// glibc symbol mismatches, identical binary on amd64/arm64. The
+// previous go-fitz approach broke aarch64 LocalAI builds due to
+// `__isoc23_strtol` undefined references in libmupdf's bundled .a
+// (compiled against glibc 2.38+).
+var (
+	pdfiumPool     pdfium.Pool
+	pdfiumPoolOnce sync.Once
+	pdfiumPoolErr  error
+)
+
+func initPDFiumPool() {
+	pdfiumPoolOnce.Do(func() {
+		pdfiumPool, pdfiumPoolErr = webassembly.Init(webassembly.Config{
+			MinIdle:  1,
+			MaxIdle:  1,
+			MaxTotal: 4,
+		})
+	})
+}
+
+// extractPDFText reads fpath, opens it with go-pdfium's WebAssembly
+// backend, and concatenates per-page text. Runs the work on a goroutine
+// with a wall-clock timeout — PDFium is robust against adversarial
+// PDFs (it's the same parser Chrome ships) but the timeout protects
+// against degenerate cases. If the timeout fires the goroutine
+// continues until PDFium returns, then is GC'd; the caller does not
+// block.
 func extractPDFText(fpath string) (string, error) {
 	type result struct {
 		text string
@@ -579,22 +605,52 @@ func extractPDFText(fpath string) (string, error) {
 	ch := make(chan result, 1)
 
 	go func() {
-		doc, err := fitz.New(fpath)
-		if err != nil {
-			ch <- result{err: fmt.Errorf("opening pdf: %w", err)}
+		initPDFiumPool()
+		if pdfiumPoolErr != nil {
+			ch <- result{err: fmt.Errorf("pdfium pool init: %w", pdfiumPoolErr)}
 			return
 		}
-		defer doc.Close()
+		instance, err := pdfiumPool.GetInstance(30 * time.Second)
+		if err != nil {
+			ch <- result{err: fmt.Errorf("pdfium acquire: %w", err)}
+			return
+		}
+		defer instance.Close()
+
+		// #nosec G304 -- fpath is internally derived from the staged upload path
+		data, err := os.ReadFile(fpath)
+		if err != nil {
+			ch <- result{err: fmt.Errorf("reading pdf: %w", err)}
+			return
+		}
+
+		open, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
+		if err != nil {
+			ch <- result{err: fmt.Errorf("pdfium open: %w", err)}
+			return
+		}
+		defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: open.Document})
+
+		count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: open.Document})
+		if err != nil {
+			ch <- result{err: fmt.Errorf("pdfium page count: %w", err)}
+			return
+		}
 
 		var sb strings.Builder
-		for i := 0; i < doc.NumPage(); i++ {
-			pageText, perr := doc.Text(i)
+		for i := 0; i < count.PageCount; i++ {
+			page, perr := instance.GetPageText(&requests.GetPageText{
+				Page: requests.Page{ByIndex: &requests.PageByIndex{
+					Document: open.Document,
+					Index:    i,
+				}},
+			})
 			if perr != nil {
 				ch <- result{err: fmt.Errorf("extracting page %d: %w", i+1, perr)}
 				return
 			}
-			sb.WriteString(pageText)
-			if i+1 < doc.NumPage() {
+			sb.WriteString(page.Text)
+			if i+1 < count.PageCount {
 				sb.WriteString("\n\n")
 			}
 		}
@@ -607,9 +663,9 @@ func extractPDFText(fpath string) (string, error) {
 		if r.err != nil {
 			return "", r.err
 		}
-		// PDF extraction can still produce invalid UTF-8 byte sequences
-		// that PostgreSQL rejects (and null bytes that some tooling
-		// chokes on). Sanitize before returning.
+		// PDFium can emit invalid UTF-8 byte sequences from PDFs with
+		// custom CMaps; PostgreSQL rejects those and null bytes break
+		// downstream tooling. Sanitize before returning.
 		text := strings.ToValidUTF8(r.text, " ")
 		text = strings.ReplaceAll(text, "\x00", "")
 		return text, nil
