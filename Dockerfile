@@ -1,5 +1,8 @@
-# Build the Go binary in a separate stage utilizing Makefile
-FROM golang:1.24 AS builder
+# Build the Go binary in a separate stage utilizing Makefile.
+# Aligned with LocalAGI / LocalAI (both on Go 1.26). LocalRecall's go.mod
+# directive is 1.25.0; the previous golang:1.24 base started failing
+# `go mod download` after the go-pdfium swap brought in newer x/* deps.
+FROM golang:1.26 AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
