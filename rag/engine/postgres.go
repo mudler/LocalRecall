@@ -698,6 +698,74 @@ func (p *PostgresDB) GetBySource(source string) ([]types.Result, error) {
 	return results, nil
 }
 
+// hybridCandidateMultiplier controls how many candidates each retrieval arm
+// (vector and BM25) pulls before fusion: max(limit*multiplier, floor). A larger
+// pool trades latency for recall; 10x with a floor of 100 keeps recall high for
+// typical small result limits while staying index-bound.
+const (
+	hybridCandidateMultiplier = 10
+	hybridCandidateFloor      = 100
+	// rrfK is the Reciprocal Rank Fusion smoothing constant. 60 is the value used
+	// across the IR literature and by pgvector/Timescale's reference hybrid-search
+	// examples; it damps the influence of the very top ranks so the two arms blend
+	// smoothly.
+	rrfK = 60
+)
+
+// buildHybridSearchQuery returns the SQL for hybrid (BM25 + vector) search over
+// the documents table. Bind parameters: $1 query text, $2 BM25 weight,
+// $3 query embedding (::vector), $4 vector weight, $5 result limit.
+//
+// It follows the canonical Reciprocal Rank Fusion pattern recommended by both
+// pgvector and Timescale (pg_textsearch + pgvectorscale). Each arm retrieves its
+// top-N candidates via a *bare* operator - "ORDER BY embedding <=> $vec" and
+// "ORDER BY full_text <@> to_bm25query(...)" - which pgvector's HNSW/DiskANN and
+// the BM25 index serve directly, and assigns a rank. The arms are combined with a
+// FULL OUTER JOIN and scored by weighted RRF (sum of weight/(rrfK+rank)); the
+// final id list is joined back to the table by primary key to fetch payloads.
+//
+// RRF fuses by *rank*, not raw score, which avoids mixing BM25's unbounded scores
+// with cosine similarity's [0,1] range. The previous query sorted on a wrapped
+// scalar similarity expression in a single stage, which blinded the planner into
+// a full sequential scan over every row and exceeded the statement timeout on
+// multi-million-row collections (LocalAI issue #10186). $2/$4 weight each arm
+// (equal by default), so an arm can be biased without breaking the index path.
+func buildHybridSearchQuery(tableName string) string {
+	candidatePool := fmt.Sprintf("GREATEST($5 * %d, %d)", hybridCandidateMultiplier, hybridCandidateFloor)
+	return fmt.Sprintf(`
+		WITH bm25_results AS (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY full_text <@> to_bm25query($1, 'idx_%[1]s_bm25')) AS rank
+			FROM %[1]s
+			ORDER BY full_text <@> to_bm25query($1, 'idx_%[1]s_bm25')
+			LIMIT %[2]s
+		),
+		vector_results AS (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $3::vector) AS rank
+			FROM %[1]s
+			WHERE embedding IS NOT NULL
+			ORDER BY embedding <=> $3::vector
+			LIMIT %[2]s
+		),
+		fused AS (
+			SELECT
+				COALESCE(b.id, v.id) AS id,
+				COALESCE($2 / (%[3]d + b.rank), 0) + COALESCE($4 / (%[3]d + v.rank), 0) AS similarity
+			FROM bm25_results b
+			FULL OUTER JOIN vector_results v ON b.id = v.id
+		)
+		SELECT
+			d.id::text,
+			COALESCE(d.title, '') as title,
+			d.content,
+			d.metadata,
+			f.similarity
+		FROM fused f
+		JOIN %[1]s d ON d.id = f.id
+		ORDER BY f.similarity DESC
+		LIMIT $5
+	`, tableName, candidatePool, rrfK)
+}
+
 func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error) {
 	ctx := context.Background()
 
@@ -708,23 +776,8 @@ func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error
 	}
 	queryEmbeddingStr := formatVector(queryEmbedding)
 
-	// Build hybrid search query
-	// Combine BM25 score and vector similarity
-	query := fmt.Sprintf(`
-		SELECT 
-			id::text,
-			COALESCE(title, '') as title,
-			content,
-			metadata,
-			(
-				COALESCE(-(full_text <@> to_bm25query($1, 'idx_%s_bm25')), 0) * $2 +
-				COALESCE((1 - (embedding <=> $3::vector)), 0) * $4
-			) as similarity
-		FROM %s
-		WHERE embedding IS NOT NULL
-		ORDER BY similarity DESC
-		LIMIT $5
-	`, p.tableName, p.tableName)
+	// Build hybrid search query (BM25 + vector similarity)
+	query := buildHybridSearchQuery(p.tableName)
 
 	rows, err := p.pool.Query(ctx, query, s, p.bm25Weight, queryEmbeddingStr, p.vectorWeight, similarEntries)
 	if err != nil {
