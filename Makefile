@@ -4,6 +4,13 @@ export CGO_ENABLED?=0
 
 IMAGE?=quay.io/mudler/localrecall:latest
 
+# Embedding model the test suites exercise. docker-compose starts LocalAI with
+# this model, but it is downloaded/loaded lazily on first request - so the test
+# harness must wait for it to actually answer before running specs (see
+# wait-localai), otherwise the first embedding call races the download and the
+# whole suite fails with "model not found".
+EMBEDDING_MODEL?=granite-embedding-107m-multilingual
+
 print-version:
 	@echo "Version: ${VERSION}"
 
@@ -53,6 +60,23 @@ wait-localai:
 	if [ $$timeout -le 0 ]; then \
 		echo "Error: LocalAI did not become ready in time"; \
 		docker compose logs localai | tail -20; \
+		exit 1; \
+	fi
+	@echo "Warming embedding model '$(EMBEDDING_MODEL)' (downloaded lazily on first use)..."
+	@timeout=600; \
+	while [ $$timeout -gt 0 ]; do \
+		if curl -fsS http://localhost:8081/v1/embeddings \
+			-H 'Content-Type: application/json' \
+			-d '{"model":"$(EMBEDDING_MODEL)","input":"warmup"}' >/dev/null 2>&1; then \
+			echo "Embedding model '$(EMBEDDING_MODEL)' is ready"; \
+			break; \
+		fi; \
+		sleep 3; \
+		timeout=$$((timeout - 3)); \
+	done; \
+	if [ $$timeout -le 0 ]; then \
+		echo "Error: embedding model '$(EMBEDDING_MODEL)' did not load in time"; \
+		docker compose logs localai | tail -30; \
 		exit 1; \
 	fi
 
