@@ -97,10 +97,21 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 }
 
 func sanitizeTableName(name string) string {
-	// Replace invalid characters with underscores
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, ".", "_")
-	name = strings.ReplaceAll(name, " ", "_")
+	// Replace every character that is not a valid PostgreSQL identifier
+	// character with an underscore. Allowlisting (rather than stripping a
+	// hardcoded set such as '-', '.', ' ') guarantees the result is a legal
+	// unquoted identifier whatever the collection name contains: the ':'
+	// namespace separator used for per-user collections (e.g. the synthetic
+	// "legacy-api-key:<agent>" name) previously slipped through and produced
+	// "syntax error at or near ':'" on CREATE TABLE.
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, name)
 	// Ensure it starts with a letter
 	if len(name) > 0 && (name[0] < 'a' || name[0] > 'z') && (name[0] < 'A' || name[0] > 'Z') {
 		name = "col_" + name
