@@ -38,6 +38,9 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		return nil, fmt.Errorf("failed to parse database URL: %w", err)
 	}
 
+	// Apply per-connection safety timeouts before opening the pool.
+	applyConnTimeouts(config, os.Getenv)
+
 	// Create connection pool
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
@@ -124,6 +127,67 @@ func getTestEmbedding(client *openai.Client, model string) ([]float32, error) {
 	return resp.Data[0].Embedding, nil
 }
 
+// applyConnTimeouts sets per-connection safety timeouts on the pool config so
+// that a single wedged or corrupt index can never hang a backend forever and
+// head-of-line block every other operation on the table.
+//
+// A corrupt custom-index access method (e.g. a BM25 index left inconsistent by
+// a past pg_resetwal) can make an INSERT spin indefinitely on a buffer-content
+// lock. Such a backend holds its relation lock the whole time, so every later
+// statement on that table queues behind it - one stuck insert silently stalls
+// the entire vector store and saturates the connection pool.
+//
+//   - lock_timeout (default 30s): bounds how long a statement waits to ACQUIRE
+//     a lock. This is the cascade-killer: queued statements fail fast instead
+//     of piling up for days. Always safe - it never interrupts a statement that
+//     is doing real work.
+//   - idle_in_transaction_session_timeout (default 300s): reaps abandoned
+//     transactions that would otherwise pin locks and the xmin horizon.
+//   - statement_timeout (default unset): bounds total statement runtime, which
+//     also kills the wedged insert itself. Left OFF by default because a
+//     legitimate large DiskANN/HNSW index build can exceed any fixed limit;
+//     index builds are exempted (see execNoStatementTimeout) so operators can
+//     safely opt in via POSTGRES_STATEMENT_TIMEOUT.
+//
+// Any value of "0" or "off" is treated as an explicit opt-out.
+func applyConnTimeouts(config *pgxpool.Config, getenv func(string) string) {
+	if config.ConnConfig.RuntimeParams == nil {
+		config.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	set := func(param, env, def string) {
+		v := def
+		if e := getenv(env); e != "" {
+			v = e
+		}
+		if v == "" || v == "0" || strings.EqualFold(v, "off") {
+			return
+		}
+		config.ConnConfig.RuntimeParams[param] = v
+	}
+	set("lock_timeout", "POSTGRES_LOCK_TIMEOUT", "30s")
+	set("idle_in_transaction_session_timeout", "POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT", "300s")
+	set("statement_timeout", "POSTGRES_STATEMENT_TIMEOUT", "")
+}
+
+// execNoStatementTimeout runs a DDL statement (typically a CREATE INDEX) with
+// statement_timeout disabled for that statement only, so a configured
+// POSTGRES_STATEMENT_TIMEOUT cannot abort a legitimately long index build.
+// lock_timeout still applies, so the build never waits forever for a lock.
+func (p *PostgresDB) execNoStatementTimeout(ctx context.Context, sql string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, sql); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (p *PostgresDB) setupDatabase() error {
 	ctx := context.Background()
 
@@ -195,7 +259,7 @@ func (p *PostgresDB) setupDatabase() error {
 
 	// Create indexes
 	// GIN index for native search
-	_, err = p.pool.Exec(ctx, fmt.Sprintf(`
+	err = p.execNoStatementTimeout(ctx, fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS idx_%s_search ON %s USING GIN(search_vector)
 	`, p.tableName, p.tableName))
 	if err != nil {
@@ -204,8 +268,8 @@ func (p *PostgresDB) setupDatabase() error {
 
 	// BM25 index - required for hybrid search
 	indexName := fmt.Sprintf("idx_%s_bm25", p.tableName)
-	_, err = p.pool.Exec(ctx, fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS %s ON %s 
+	err = p.execNoStatementTimeout(ctx, fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS %s ON %s
 		USING bm25(full_text) WITH (text_config='english')
 	`, indexName, p.tableName))
 	if err != nil {
@@ -227,7 +291,7 @@ func (p *PostgresDB) createVectorIndex(ctx context.Context, vectorscaleInstalled
 	indexName := fmt.Sprintf("idx_%s_embedding", p.tableName)
 
 	if vectorscaleInstalled {
-		_, err := p.pool.Exec(ctx, fmt.Sprintf(`
+		err := p.execNoStatementTimeout(ctx, fmt.Sprintf(`
 			CREATE INDEX IF NOT EXISTS %s ON %s
 			USING diskann(embedding)
 		`, indexName, p.tableName))
@@ -238,7 +302,7 @@ func (p *PostgresDB) createVectorIndex(ctx context.Context, vectorscaleInstalled
 		xlog.Warn("Failed to create DiskANN index, trying HNSW", "error", err)
 	}
 
-	_, err := p.pool.Exec(ctx, fmt.Sprintf(`
+	err := p.execNoStatementTimeout(ctx, fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS %s ON %s
 		USING hnsw(embedding vector_cosine_ops)
 	`, indexName, p.tableName))
