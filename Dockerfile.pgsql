@@ -57,8 +57,12 @@ RUN apt-get install -y \
 # Ensure PostgreSQL binaries are in the PATH
 ENV PATH="/usr/lib/postgresql/18/bin:${PATH}"
 
-# Build and install pg_textsearch extension
-RUN git clone https://github.com/timescale/pg_textsearch /tmp/pg_textsearch && \
+# Build and install pg_textsearch extension (provides the bm25 access method).
+# Pin to a tagged release: building from the moving main branch shipped an
+# unreproducible "1.0.0-dev" whose bm25 index could wedge INSERTs on a
+# buffer-content lock and stall the whole vector store. Bump deliberately.
+ARG PG_TEXTSEARCH_VERSION=v1.3.1
+RUN git clone --depth 1 --branch "${PG_TEXTSEARCH_VERSION}" https://github.com/timescale/pg_textsearch /tmp/pg_textsearch && \
     cd /tmp/pg_textsearch && \
     make && \
     make install && \
