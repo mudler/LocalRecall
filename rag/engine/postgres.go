@@ -24,6 +24,7 @@ type PostgresDB struct {
 	embeddingDims   int
 	bm25Weight      float64
 	vectorWeight    float64
+	bm25TextConfig  string
 }
 
 // NewPostgresDBCollection creates a new PostgreSQL-based collection
@@ -73,6 +74,14 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		}
 	}
 
+	// BM25 tokenizer/stemmer config (PostgreSQL text search config name).
+	// Default: english. Set BM25_TEXT_CONFIG to e.g. "german" or "de_en"
+	// (auto-provisioned below) for non-English / mixed-language corpora.
+	bm25TextConfig := "english"
+	if cfg := os.Getenv("BM25_TEXT_CONFIG"); cfg != "" {
+		bm25TextConfig = cfg
+	}
+
 	pg := &PostgresDB{
 		pool:            pool,
 		collectionName:  collectionName,
@@ -82,6 +91,7 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		embeddingDims:   embeddingDims,
 		bm25Weight:      bm25Weight,
 		vectorWeight:    vectorWeight,
+		bm25TextConfig:  bm25TextConfig,
 	}
 
 	// Setup database (extensions, tables, indexes)
@@ -277,12 +287,20 @@ func (p *PostgresDB) setupDatabase() error {
 		xlog.Warn("Failed to create GIN index", "error", err)
 	}
 
-	// BM25 index - required for hybrid search
+	// BM25 index - required for hybrid search.
+	// The desired text_config is honoured idempotently: if an existing index
+	// uses a different config we drop it so the CREATE below rebuilds it.
 	indexName := fmt.Sprintf("idx_%s_bm25", p.tableName)
+	if err := p.ensureTextSearchConfig(ctx); err != nil {
+		xlog.Warn("Failed to ensure custom text search config", "config", p.bm25TextConfig, "error", err)
+	}
+	if err := p.ensureBM25IndexConfig(ctx, indexName); err != nil {
+		return fmt.Errorf("failed to ensure BM25 index text_config: %w", err)
+	}
 	err = p.execNoStatementTimeout(ctx, fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS %s ON %s
-		USING bm25(full_text) WITH (text_config='english')
-	`, indexName, p.tableName))
+		USING bm25(full_text) WITH (text_config='%s')
+	`, indexName, p.tableName, p.bm25TextConfig))
 	if err != nil {
 		return fmt.Errorf("failed to create BM25 index (required for hybrid search): %w", err)
 	}
@@ -291,6 +309,59 @@ func (p *PostgresDB) setupDatabase() error {
 		return err
 	}
 
+	return nil
+}
+
+// ensureTextSearchConfig creates a custom multi-language pg_ts_config when
+// requested via BM25_TEXT_CONFIG. Currently only "de_en" is provisioned
+// automatically — it stems both German and English tokens, which is what we
+// want for a German/English mixed document corpus. Built-in single-language
+// configs (e.g. "german", "english") are used as-is.
+func (p *PostgresDB) ensureTextSearchConfig(ctx context.Context) error {
+	if p.bm25TextConfig != "de_en" {
+		return nil
+	}
+	_, err := p.pool.Exec(ctx, `
+		DO $$
+		BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'de_en') THEN
+				CREATE TEXT SEARCH CONFIGURATION public.de_en (COPY = pg_catalog.simple);
+				ALTER TEXT SEARCH CONFIGURATION public.de_en
+					ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part
+					WITH german_stem, english_stem;
+			END IF;
+		END $$;
+	`)
+	return err
+}
+
+// ensureBM25IndexConfig drops the existing BM25 index when its text_config
+// differs from p.bm25TextConfig. The follow-up CREATE INDEX IF NOT EXISTS
+// then rebuilds it with the desired config. No-op when the index does not
+// yet exist or already uses the desired config.
+func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName string) error {
+	var indexDef string
+	err := p.pool.QueryRow(ctx, `
+		SELECT pg_get_indexdef(c.oid)
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind = 'i' AND c.relname = $1
+	`, indexName).Scan(&indexDef)
+	if err == pgx.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect existing BM25 index: %w", err)
+	}
+	desired := fmt.Sprintf("text_config='%s'", p.bm25TextConfig)
+	if strings.Contains(indexDef, desired) {
+		return nil
+	}
+	xlog.Info("BM25 index text_config differs, recreating",
+		"index", indexName, "want", p.bm25TextConfig, "current_def", indexDef)
+	if _, err := p.pool.Exec(ctx, fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)); err != nil {
+		return fmt.Errorf("drop stale BM25 index %s: %w", indexName, err)
+	}
 	return nil
 }
 
