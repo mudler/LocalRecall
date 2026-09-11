@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +26,8 @@ type PostgresDB struct {
 	bm25Weight      float64
 	vectorWeight    float64
 	bm25TextConfig  string
+	tsCfg           string
+	tsCfgOnce       sync.Once
 }
 
 // NewPostgresDBCollection creates a new PostgreSQL-based collection
@@ -721,10 +724,11 @@ func (p *PostgresDB) StoreDocuments(s []string, metadata map[string]string) ([]R
 		var id int
 		err = p.pool.QueryRow(ctx, fmt.Sprintf(`
 			INSERT INTO %s (title, content, category, metadata, word_count, search_vector, embedding)
-			VALUES ($1, $2, $3, $4::jsonb, $5, to_tsvector('english', COALESCE($1, '') || ' ' || $2), $6::vector)
+			VALUES ($1, $2, $3, $4::jsonb, $5, to_tsvector($7::regconfig, COALESCE($1, '') || ' ' || $2), $6::vector)
 			RETURNING id
 		`, p.tableName),
-			title, content, metadata["category"], string(metadataJSON), wordCount, embeddingStr).Scan(&id)
+			title, content, metadata["category"], string(metadataJSON), wordCount, embeddingStr,
+			p.tsVectorConfig()).Scan(&id)
 		if err != nil {
 			return nil, fmt.Errorf("failed to insert document: %w", err)
 		}
@@ -735,6 +739,33 @@ func (p *PostgresDB) StoreDocuments(s []string, metadata map[string]string) ([]R
 	}
 
 	return results, nil
+}
+
+// tsVectorConfig returns the text search configuration used for the search_vector
+// column. v0.6.3 hardcodes 'english', which mis-stems every non-English corpus; the
+// column is written on EVERY insert, so an unknown configuration name would break all
+// writes. The name is therefore validated against pg_ts_config once and falls back to
+// 'simple' (language-agnostic, never wrong) when it is not installed.
+func (p *PostgresDB) tsVectorConfig() string {
+	p.tsCfgOnce.Do(func() {
+		p.tsCfg = "simple"
+		name := p.bm25TextConfig
+		if name == "" {
+			return
+		}
+		var ok bool
+		if err := p.pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = $1)`, name).Scan(&ok); err != nil {
+			xlog.Warn("Could not verify text search config, using 'simple'", "config", name, "error", err)
+			return
+		}
+		if ok {
+			p.tsCfg = name
+			return
+		}
+		xlog.Warn("Text search config not installed, using 'simple'", "config", name)
+	})
+	return p.tsCfg
 }
 
 func (p *PostgresDB) Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error {
@@ -870,6 +901,21 @@ const (
 // FULL OUTER JOIN and scored by weighted RRF (sum of weight/(rrfK+rank)); the
 // final id list is joined back to the table by primary key to fetch payloads.
 //
+// The weights are cast to float8 EXPLICITLY. Without the cast Postgres infers the
+// parameter type from the division's right operand - ROW_NUMBER() returns bigint - so
+// `$2 / (60 + rank)` becomes INTEGER division and yields 0 for every weight below 61.
+// Every candidate then scores exactly 0, `ORDER BY similarity DESC` is a tie, and the
+// endpoint returns the join order instead of a ranking. Reproduced on PostgreSQL 18:
+//
+//	PREPARE p AS SELECT COALESCE($1 / (60 + r.rank), 0) FROM (SELECT 1::bigint AS rank) r;
+//	-- inferred parameter type: bigint
+//	EXECUTE p(0.5);  --> 0
+//	EXECUTE p(1);    --> 0
+//
+// Measured on a German tax-law corpus (650 chunks, four questions with a verifiable
+// answer): 2/4 correct in the top 3 before, 4/4 after. A verbatim excerpt of a document
+// did not even retrieve its own chunk at rank 1 before the fix.
+//
 // RRF fuses by *rank*, not raw score, which avoids mixing BM25's unbounded scores
 // with cosine similarity's [0,1] range. The previous query sorted on a wrapped
 // scalar similarity expression in a single stage, which blinded the planner into
@@ -895,7 +941,7 @@ func buildHybridSearchQuery(tableName string) string {
 		fused AS (
 			SELECT
 				COALESCE(b.id, v.id) AS id,
-				COALESCE($2 / (%[3]d + b.rank), 0) + COALESCE($4 / (%[3]d + v.rank), 0) AS similarity
+				COALESCE($2::float8 / (%[3]d + b.rank), 0) + COALESCE($4::float8 / (%[3]d + v.rank), 0) AS similarity
 			FROM bm25_results b
 			FULL OUTER JOIN vector_results v ON b.id = v.id
 		)
