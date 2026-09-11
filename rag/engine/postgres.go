@@ -27,7 +27,7 @@ type PostgresDB struct {
 	vectorWeight    float64
 	bm25TextConfig  string
 	tsCfg           string
-	tsCfgOnce       sync.Once
+	tsCfgMu         sync.Mutex
 }
 
 // NewPostgresDBCollection creates a new PostgreSQL-based collection
@@ -728,7 +728,7 @@ func (p *PostgresDB) StoreDocuments(s []string, metadata map[string]string) ([]R
 			RETURNING id
 		`, p.tableName),
 			title, content, metadata["category"], string(metadataJSON), wordCount, embeddingStr,
-			p.tsVectorConfig()).Scan(&id)
+			p.tsVectorConfig(ctx)).Scan(&id)
 		if err != nil {
 			return nil, fmt.Errorf("failed to insert document: %w", err)
 		}
@@ -746,25 +746,31 @@ func (p *PostgresDB) StoreDocuments(s []string, metadata map[string]string) ([]R
 // column is written on EVERY insert, so an unknown configuration name would break all
 // writes. The name is therefore validated against pg_ts_config once and falls back to
 // 'simple' (language-agnostic, never wrong) when it is not installed.
-func (p *PostgresDB) tsVectorConfig() string {
-	p.tsCfgOnce.Do(func() {
+// The result is cached only once the lookup succeeds, so a transient error on
+// the first insert does not pin 'simple' for the life of the process.
+func (p *PostgresDB) tsVectorConfig(ctx context.Context) string {
+	p.tsCfgMu.Lock()
+	defer p.tsCfgMu.Unlock()
+	if p.tsCfg != "" {
+		return p.tsCfg
+	}
+	name := p.bm25TextConfig
+	if name == "" {
 		p.tsCfg = "simple"
-		name := p.bm25TextConfig
-		if name == "" {
-			return
-		}
-		var ok bool
-		if err := p.pool.QueryRow(context.Background(),
-			`SELECT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = $1)`, name).Scan(&ok); err != nil {
-			xlog.Warn("Could not verify text search config, using 'simple'", "config", name, "error", err)
-			return
-		}
-		if ok {
-			p.tsCfg = name
-			return
-		}
-		xlog.Warn("Text search config not installed, using 'simple'", "config", name)
-	})
+		return p.tsCfg
+	}
+	var ok bool
+	if err := p.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = $1)`, name).Scan(&ok); err != nil {
+		xlog.Warn("Could not verify text search config, using 'simple' for now", "config", name, "error", err)
+		return "simple"
+	}
+	if ok {
+		p.tsCfg = name
+		return p.tsCfg
+	}
+	xlog.Warn("Text search config not installed, using 'simple'", "config", name)
+	p.tsCfg = "simple"
 	return p.tsCfg
 }
 
