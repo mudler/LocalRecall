@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -356,8 +357,7 @@ func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName string
 	if err != nil {
 		return fmt.Errorf("inspect existing BM25 index: %w", err)
 	}
-	desired := fmt.Sprintf("text_config='%s'", p.bm25TextConfig)
-	if strings.Contains(indexDef, desired) {
+	if bm25IndexHasTextConfig(indexDef, p.bm25TextConfig) {
 		return nil
 	}
 	xlog.Info("BM25 index text_config differs, recreating",
@@ -366,6 +366,22 @@ func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName string
 		return fmt.Errorf("drop stale BM25 index %s: %w", indexName, err)
 	}
 	return nil
+}
+
+// bm25TextConfigRe extracts the text_config value from an index definition.
+// pg_get_indexdef() renders the option WITHOUT quotes (text_config=simple),
+// while CREATE INDEX is written WITH quotes (text_config='simple'), so both
+// forms must be accepted.
+var bm25TextConfigRe = regexp.MustCompile(`(?i)text_config\s*=\s*'?([A-Za-z0-9_.]+)'?`)
+
+// bm25IndexHasTextConfig reports whether indexDef (as returned by
+// pg_get_indexdef) already uses the given text search configuration.
+func bm25IndexHasTextConfig(indexDef, textConfig string) bool {
+	m := bm25TextConfigRe.FindStringSubmatch(indexDef)
+	if m == nil {
+		return false
+	}
+	return strings.EqualFold(m[1], textConfig)
 }
 
 // createVectorIndex creates the vector similarity index on the embedding column.
