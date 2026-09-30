@@ -81,9 +81,14 @@ ENV CARGO_TARGET_DIR="/tmp/cargo-target"
 # Build and install pgvectorscale extension (provides diskann access method)
 # Note: This may fail with SIGILL errors in some Docker environments due to Rust toolchain issues.
 # If this fails, pgvectorscale can be built separately and installed, or the system will fall back to pgvector.
-# For production, use a specific version tag instead of main branch.
+# Pin to a tagged release, for the same reason as pg_textsearch above: building from the
+# moving main branch shipped an unreleased "0.9.2-dev" whose control file has no upgrade
+# script from the 0.9.0 an existing database was created with. Every diskann index then
+# fails with 'could not access file "vectorscale-0.9.0"', searches return empty and
+# pg_dump aborts. Bump deliberately; run ALTER EXTENSION vectorscale UPDATE after a bump.
+ARG PGVECTORSCALE_VERSION=0.9.1
 RUN cd /tmp && \
-    git clone --depth 1 https://github.com/timescale/pgvectorscale && \
+    git clone --depth 1 --branch "${PGVECTORSCALE_VERSION}" https://github.com/timescale/pgvectorscale && \
     cd pgvectorscale/pgvectorscale && \
     PGRX_VERSION=$(cargo metadata --format-version 1 2>/dev/null | jq -r '.packages[] | select(.name == "pgrx") | .version' 2>/dev/null || \
     grep -E 'pgrx\s*=\s*"' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "0.11.8") && \
