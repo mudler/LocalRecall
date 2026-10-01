@@ -297,13 +297,14 @@ func (p *PostgresDB) setupDatabase() error {
 	if err := p.ensureTextSearchConfig(ctx); err != nil {
 		xlog.Warn("Failed to ensure custom text search config", "config", p.bm25TextConfig, "error", err)
 	}
-	if err := p.ensureBM25IndexConfig(ctx, indexName); err != nil {
+	indexTextConfig := p.qualifiedTextConfig(ctx)
+	if err := p.ensureBM25IndexConfig(ctx, indexName, indexTextConfig); err != nil {
 		return fmt.Errorf("failed to ensure BM25 index text_config: %w", err)
 	}
 	err = p.execNoStatementTimeout(ctx, fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS %s ON %s
 		USING bm25(full_text) WITH (text_config='%s')
-	`, indexName, p.tableName, p.bm25TextConfig))
+	`, indexName, p.tableName, indexTextConfig))
 	if err != nil {
 		return fmt.Errorf("failed to create BM25 index (required for hybrid search): %w", err)
 	}
@@ -338,11 +339,36 @@ func (p *PostgresDB) ensureTextSearchConfig(ctx context.Context) error {
 	return err
 }
 
+// qualifiedTextConfig returns the text_config to write into the BM25 index.
+// PostgreSQL 17+ builds indexes with a restricted search_path (pg_catalog,
+// pg_temp), so a configuration outside pg_catalog — like the auto-provisioned
+// public.de_en — is not found by its bare name and CREATE INDEX fails with
+// `text search configuration "de_en" does not exist`. Such configurations are
+// schema-qualified; built-in ones and already-qualified names stay as given.
+func (p *PostgresDB) qualifiedTextConfig(ctx context.Context) string {
+	name := p.bm25TextConfig
+	if name == "" || strings.Contains(name, ".") {
+		return name
+	}
+	var schema string
+	err := p.pool.QueryRow(ctx, `
+		SELECT n.nspname FROM pg_ts_config c
+		JOIN pg_namespace n ON n.oid = c.cfgnamespace
+		WHERE c.cfgname = $1
+		ORDER BY n.nspname = 'pg_catalog' DESC
+		LIMIT 1
+	`, name).Scan(&schema)
+	if err != nil || schema == "pg_catalog" {
+		return name
+	}
+	return schema + "." + name
+}
+
 // ensureBM25IndexConfig drops the existing BM25 index when its text_config
-// differs from p.bm25TextConfig. The follow-up CREATE INDEX IF NOT EXISTS
+// differs from the desired one. The follow-up CREATE INDEX IF NOT EXISTS
 // then rebuilds it with the desired config. No-op when the index does not
 // yet exist or already uses the desired config.
-func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName string) error {
+func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName, textConfig string) error {
 	var indexDef string
 	err := p.pool.QueryRow(ctx, `
 		SELECT pg_get_indexdef(c.oid)
@@ -356,12 +382,12 @@ func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName string
 	if err != nil {
 		return fmt.Errorf("inspect existing BM25 index: %w", err)
 	}
-	desired := fmt.Sprintf("text_config='%s'", p.bm25TextConfig)
+	desired := fmt.Sprintf("text_config='%s'", textConfig)
 	if strings.Contains(indexDef, desired) {
 		return nil
 	}
 	xlog.Info("BM25 index text_config differs, recreating",
-		"index", indexName, "want", p.bm25TextConfig, "current_def", indexDef)
+		"index", indexName, "want", textConfig, "current_def", indexDef)
 	if _, err := p.pool.Exec(ctx, fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)); err != nil {
 		return fmt.Errorf("drop stale BM25 index %s: %w", indexName, err)
 	}
