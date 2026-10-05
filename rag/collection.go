@@ -72,6 +72,9 @@ func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, d
 		postgresDB,
 		maxChunkSize, chunkOverlap, llmClient, embeddingModel)
 	if err != nil {
+		// The KB is discarded, so release its connection pool now instead of
+		// leaving the connections open until they idle out.
+		postgresDB.Close()
 		return nil, fmt.Errorf("create PersistentKB: %w", err)
 	}
 

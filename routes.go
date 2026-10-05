@@ -200,6 +200,17 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid request", err.Error()))
 		}
 
+		// The collection is already loaded: return it as is. Building a second
+		// engine would replace the live one in the map and drop it without
+		// closing it, which leaks its database connections. The status stays
+		// 201 so that existing clients, which check for it, keep working.
+		if existing, ok := collections[r.Name]; ok && existing != nil {
+			return c.JSON(http.StatusCreated, successResponse("Collection created successfully", map[string]interface{}{
+				"name":       r.Name,
+				"created_at": time.Now().Format(time.RFC3339),
+			}))
+		}
+
 		// If the engine can't construct the collection right now (transient
 		// embedding/DB outage, misconfiguration, …), surface that as 502 so
 		// the caller can retry. Returning success and storing a nil entry

@@ -208,6 +208,7 @@ LocalRecall uses environment variables to configure its behavior. These variable
 | `POSTGRES_LOCK_TIMEOUT`     | Per-connection `lock_timeout` for the PostgreSQL engine (default: `30s`). Bounds how long a statement waits to acquire a lock so a single stuck operation cannot make every other statement on the table queue indefinitely. Set to `0`/`off` to disable. |
 | `POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT` | Per-connection `idle_in_transaction_session_timeout` for the PostgreSQL engine (default: `300s`). Reaps abandoned transactions that would otherwise pin locks. Set to `0`/`off` to disable. |
 | `POSTGRES_STATEMENT_TIMEOUT` | Per-connection `statement_timeout` for the PostgreSQL engine (default: unset). Bounds total statement runtime; useful to auto-abort a wedged query. Index builds are exempted, so it is safe to enable. Set to `0`/`off`/empty to disable. |
+| `POSTGRES_POOL_MAX_CONNS`   | Maximum number of connections in the pool of each collection for the PostgreSQL engine (default: `4`). Every collection opens its own pool, so the total can reach this value times the number of collections. A `pool_max_conns` parameter in `DATABASE_URL` has priority. |
 | `API_KEYS`                  | Comma-separated list of API keys for securing access to the REST API (optional).                                |
 | `GIT_PRIVATE_KEY`           | Base64-encoded SSH private key for accessing private Git repositories (optional).                                |
 
