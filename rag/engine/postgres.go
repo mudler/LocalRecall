@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mudler/localrecall/rag/types"
 	"github.com/mudler/xlog"
@@ -31,8 +32,18 @@ type PostgresDB struct {
 	tsCfgMu         sync.Mutex
 }
 
-// NewPostgresDBCollection creates a new PostgreSQL-based collection
-func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *openai.Client, embeddingsModel string) (*PostgresDB, error) {
+// newPool opens a connection pool. Tests replace it to observe the pool
+// lifecycle without a database.
+var newPool = pgxpool.NewWithConfig
+
+// NewPostgresDBCollection creates a new PostgreSQL-based collection.
+//
+// Every collection opens its own connection pool. If construction fails after
+// the pool is open, the pool is closed before returning, so a caller that
+// retries on each request (for example while the embedding model is down)
+// does not pile up idle server connections until PostgreSQL refuses new
+// clients.
+func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *openai.Client, embeddingsModel string) (_ *PostgresDB, err error) {
 	if databaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required for PostgreSQL engine")
 	}
@@ -45,24 +56,33 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 
 	// Apply per-connection safety timeouts before opening the pool.
 	applyConnTimeouts(config, os.Getenv)
+	applyPoolLimits(config, os.Getenv)
 
-	// Create connection pool
-	pool, err := pgxpool.NewWithConfig(context.Background(), config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %w", err)
-	}
-
-	// Test connection
-	if err := pool.Ping(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
-
-	// Get embedding dimensions from test embedding
+	// Get embedding dimensions from a test embedding. Do this before opening
+	// the pool: when the embedding model fails, no database connection is
+	// opened at all.
 	testEmbedding, err := getTestEmbedding(openaiClient, embeddingsModel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get test embedding: %w", err)
 	}
 	embeddingDims := len(testEmbedding)
+
+	// Create connection pool
+	pool, err := newPool(context.Background(), config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection pool: %w", err)
+	}
+	// From here on, close the pool on every error return.
+	defer func() {
+		if err != nil {
+			pool.Close()
+		}
+	}()
+
+	// Test connection
+	if err := pool.Ping(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
 
 	// Get hybrid search weights from environment
 	bm25Weight := 0.5
@@ -100,7 +120,6 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 
 	// Setup database (extensions, tables, indexes)
 	if err := pg.setupDatabase(); err != nil {
-		pool.Close()
 		return nil, fmt.Errorf("failed to setup database: %w", err)
 	}
 
@@ -111,6 +130,12 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 	}
 
 	return pg, nil
+}
+
+// Close releases the connection pool of the collection. The collection must
+// not be used after Close.
+func (p *PostgresDB) Close() {
+	p.pool.Close()
 }
 
 func sanitizeTableName(name string) string {
@@ -150,6 +175,42 @@ func getTestEmbedding(client *openai.Client, model string) ([]float32, error) {
 		return nil, fmt.Errorf("no embedding data returned")
 	}
 	return resp.Data[0].Embedding, nil
+}
+
+// defaultPoolMaxConns is the pool size used when neither the connection string
+// nor POSTGRES_POOL_MAX_CONNS sets one. Each collection opens its own pool, so
+// the pgx default (the number of CPUs, at least 4) multiplied by the number of
+// collections can exceed the server's max_connections on a large host.
+const defaultPoolMaxConns = int32(4)
+
+// applyPoolLimits sets the maximum pool size. A pool_max_conns in the
+// connection string has priority, then POSTGRES_POOL_MAX_CONNS, then
+// defaultPoolMaxConns. Invalid environment values are ignored.
+func applyPoolLimits(config *pgxpool.Config, getenv func(string) string) {
+	if hasPoolMaxConns(config.ConnString()) {
+		return
+	}
+	config.MaxConns = defaultPoolMaxConns
+	if v := getenv("POSTGRES_POOL_MAX_CONNS"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 32)
+		if err != nil || n < 1 {
+			xlog.Warn("Ignoring invalid POSTGRES_POOL_MAX_CONNS", "value", v)
+			return
+		}
+		config.MaxConns = int32(n)
+	}
+}
+
+// hasPoolMaxConns reports whether the connection string sets pool_max_conns.
+// pgxpool.ParseConfig removes the setting after it reads it, so parse the
+// string again at the connection level, where it is kept as a runtime param.
+func hasPoolMaxConns(connString string) bool {
+	cfg, err := pgconn.ParseConfig(connString)
+	if err != nil {
+		return false
+	}
+	_, ok := cfg.RuntimeParams["pool_max_conns"]
+	return ok
 }
 
 // applyConnTimeouts sets per-connection safety timeouts on the pool config so
