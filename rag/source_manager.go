@@ -57,6 +57,15 @@ func (sm *SourceManager) RegisterCollection(name string, collection *PersistentK
 	}
 }
 
+// UnregisterCollection forgets a collection and its sources. It is used when
+// the collection was deleted by another process.
+func (sm *SourceManager) UnregisterCollection(name string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	delete(sm.collections, name)
+	delete(sm.sources, name)
+}
+
 // AddSource adds a new external source to a collection
 func (sm *SourceManager) AddSource(collectionName, url string, updateInterval time.Duration) error {
 	sm.mu.Lock()

@@ -121,38 +121,23 @@ func registerAPIRoutes(e *echo.Echo, openAIClient *openai.Client, maxChunkingSiz
 	// Load all on-disk collections. Init failures (e.g. embedding service
 	// briefly unreachable) no longer crash the server: register a nil
 	// placeholder so lookupCollection can rehydrate lazily on first use.
-	colls := rag.ListAllCollections(collectionDBPath)
+	colls := collectionNames()
 	for _, c := range colls {
 		collection, err := newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, c, collectionDBPath, embeddingModel, maxChunkingSize, chunkOverlap)
 		if err != nil {
 			xlog.Error("Failed to load collection at startup; will retry lazily on first request",
 				"collection", c, "engine", vectorEngine, "error", err)
 		}
+		collectionsMu.Lock()
 		collections[c] = collection
+		collectionsMu.Unlock()
 		if collection != nil {
 			sourceManager.RegisterCollection(c, collection)
 		}
 	}
 
 	lookupCollection = func(name string) (*rag.PersistentKB, bool) {
-		kb, exists := collections[name]
-		if !exists {
-			return nil, false
-		}
-		if kb != nil {
-			return kb, true
-		}
-		// Placeholder: collection is known on disk but its engine wrapper
-		// failed to construct earlier. Try again now.
-		kb, err := newVectorEngine(vectorEngine, openAIClient, openAIBaseURL, openAIKey, name, collectionDBPath, embeddingModel, maxChunkingSize, chunkOverlap)
-		if err != nil {
-			xlog.Error("Failed to rehydrate collection on demand",
-				"collection", name, "engine", vectorEngine, "error", err)
-			return nil, false
-		}
-		collections[name] = kb
-		sourceManager.RegisterCollection(name, kb)
-		return kb, true
+		return resolveCollection(collections, openAIClient, name, maxChunkingSize, chunkOverlap)
 	}
 
 	if len(apiKeys) > 0 {
@@ -204,7 +189,9 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 		// engine would replace the live one in the map and drop it without
 		// closing it, which leaks its database connections. The status stays
 		// 201 so that existing clients, which check for it, keep working.
-		if existing, ok := collections[r.Name]; ok && existing != nil {
+		// A collection that another replica deleted is not "loaded": it is
+		// dropped here and created again below.
+		if existing, _ := cachedCollection(collections, r.Name); existing != nil && stillExists(collections, r.Name, existing) {
 			return c.JSON(http.StatusCreated, successResponse("Collection created successfully", map[string]interface{}{
 				"name":       r.Name,
 				"created_at": time.Now().Format(time.RFC3339),
@@ -212,19 +199,17 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 		}
 
 		// If the engine can't construct the collection right now (transient
-		// embedding/DB outage, misconfiguration, …), surface that as 502 so
+		// embedding/DB outage, misconfiguration, ...), surface that as 502 so
 		// the caller can retry. Returning success and storing a nil entry
 		// would leave the caller with a permanently-broken collection.
-		collection, err := newVectorEngine(vectorEngine, client, openAIBaseURL, openAIKey, r.Name, collectionDBPath, embeddingModel, maxChunkingSize, chunkOverlap)
-		if err != nil {
+		// Creating is idempotent: with a shared database, a collection that
+		// another replica created is opened here instead of duplicated, and
+		// concurrent creates of one name open a single pool.
+		if _, err := openCollection(collections, client, r.Name, maxChunkingSize, chunkOverlap, true); err != nil {
 			xlog.Error("Failed to create collection",
 				"collection", r.Name, "engine", vectorEngine, "error", err)
 			return c.JSON(http.StatusBadGateway, errorResponse(ErrCodeInternalError, "Vector backend unavailable", err.Error()))
 		}
-		collections[r.Name] = collection
-
-		// Register the new collection with the source manager
-		sourceManager.RegisterCollection(r.Name, collection)
 
 		response := successResponse("Collection created successfully", map[string]interface{}{
 			"name":       r.Name,
@@ -482,7 +467,7 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 
 // listCollections returns all collections
 func listCollections(c echo.Context) error {
-	collectionsList := rag.ListAllCollections(collectionDBPath)
+	collectionsList := collectionNames()
 	response := successResponse("Collections retrieved successfully", map[string]interface{}{
 		"collections": collectionsList,
 		"count":       len(collectionsList),

@@ -688,7 +688,13 @@ func (p *PostgresDB) Reset() error {
 	}
 
 	// Recreate table
-	return p.setupDatabase()
+	if err := p.setupDatabase(); err != nil {
+		return err
+	}
+
+	// The collection still exists after a reset: register it again, or the
+	// other processes sharing the database would see it as deleted.
+	return p.checkAndRecalculateEmbeddings()
 }
 
 func (p *PostgresDB) GetEmbeddingDimensions() (int, error) {

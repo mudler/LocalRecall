@@ -800,3 +800,23 @@ func (db *PersistentKB) RemoveExternalSource(url string) error {
 
 	return fmt.Errorf("source %s not found", url)
 }
+
+// ExistsInStore reports whether the collection is still registered in the
+// shared store. Engines that have no shared registry (local files) always
+// report true.
+func (db *PersistentKB) ExistsInStore(ctx context.Context) (bool, error) {
+	if e, ok := db.Engine.(interface {
+		Exists(ctx context.Context) (bool, error)
+	}); ok {
+		return e.Exists(ctx)
+	}
+	return true, nil
+}
+
+// Close releases the resources held by the engine, such as a database
+// connection pool. The collection must not be used afterwards.
+func (db *PersistentKB) Close() {
+	if c, ok := db.Engine.(interface{ Close() }); ok {
+		c.Close()
+	}
+}
