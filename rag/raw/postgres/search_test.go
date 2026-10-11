@@ -101,6 +101,37 @@ func TestRawSearchMissingIndexes(t *testing.T) {
 	checkCode(t, e, raw.CodeUnavailable)
 }
 
+// An ANN access method alone is insufficient: L2 cannot order a cosine query.
+func TestRawSearchANNOperatorClass(t *testing.T) {
+	s, ctx, id := recordFixture(t)
+	text := "bicycle"
+	put(t, s, ctx, id, raw.Record{ID: "a", Vector: []float64{1, 0, 0}, Text: &text})
+	table, _ := tableName(id)
+	for _, opclass := range []string{"vector_l2_ops", "vector_cosine_ops"} {
+		exec(t, s, `DROP INDEX "lr_ann_`+id+`"`)
+		exec(t, s, `CREATE INDEX "lr_ann_`+id+`" ON `+table+` USING hnsw (vector `+opclass+`)`)
+		for _, mode := range []string{"vector", "hybrid"} {
+			for _, accuracy := range []string{"approximate", "exact"} {
+				t.Run(opclass+"/"+mode+"/"+accuracy, func(t *testing.T) {
+					r := searchRequest(mode)
+					r.Accuracy = &accuracy
+					got, e := s.Search(ctx, id, r)
+					if opclass == "vector_l2_ops" && accuracy == "approximate" {
+						checkCode(t, e, raw.CodeUnavailable) // HTTP 503, not silent exact fallback.
+						if got.Results != nil {
+							t.Fatal("partial response", got)
+						}
+						return
+					}
+					if e != nil || got.Count != 1 || got.Results[0].ID != "a" || got.Accuracy != accuracy {
+						t.Fatalf("response=%+v error=%v", got, e)
+					}
+				})
+			}
+		}
+	}
+}
+
 // Regression: pg_textsearch takes an index *name*, not SQL-quoted regclass
 // syntax. UUID hyphens make this distinction observable on every collection.
 func TestRawSearchBM25LiteralIndex(t *testing.T) {
