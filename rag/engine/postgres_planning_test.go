@@ -51,6 +51,7 @@ var _ = Describe("hybrid search query planning (LocalAI issue #10186)", func() {
 			collectionName: collectionName,
 			tableName:      sanitizeTableName(collectionName),
 			embeddingDims:  dims,
+			bm25TextConfig: "english",
 			bm25Weight:     0.5,
 			vectorWeight:   0.5,
 		}

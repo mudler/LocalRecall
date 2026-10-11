@@ -178,8 +178,8 @@ var _ = Describe("NewPostgresDBCollection pool lifecycle", func() {
 			}, 5*time.Second, 100*time.Millisecond).Should(Equal(0))
 		})
 
-		// Without the BM25 extension the schema setup fails after the pool
-		// is open and pinged. That pool must be closed too.
+		// An invalid lexical configuration fails schema setup after the pool
+		// is open and pinged, even when BM25 is installed.
 		It("keeps no server connection open after a failed schema setup", func() {
 			client, _, stop := newEmbedder(false)
 			defer stop()
@@ -187,12 +187,23 @@ var _ = Describe("NewPostgresDBCollection pool lifecycle", func() {
 			appName := fmt.Sprintf("localrecall_leak_test_%d", time.Now().UnixNano())
 			url := withApplicationName(databaseURL, appName)
 
-			db, err := NewPostgresDBCollection(fmt.Sprintf("leak_test_%d", time.Now().UnixNano()), url, client, "fake")
-			if err == nil {
-				_, _ = db.pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+db.tableName+" CASCADE")
-				db.Close()
-				Skip("schema setup succeeds on this database; the failure path cannot be exercised")
-			}
+			oldConfig, hadConfig := os.LookupEnv("BM25_TEXT_CONFIG")
+			Expect(os.Setenv("BM25_TEXT_CONFIG", "lr_nonexistent_text_config")).To(Succeed())
+			defer func() {
+				if hadConfig {
+					_ = os.Setenv("BM25_TEXT_CONFIG", oldConfig)
+				} else {
+					_ = os.Unsetenv("BM25_TEXT_CONFIG")
+				}
+			}()
+			name := fmt.Sprintf("leak_test_%d", time.Now().UnixNano())
+			adminCleanup, err := pgxpool.New(context.Background(), databaseURL)
+			Expect(err).NotTo(HaveOccurred())
+			defer adminCleanup.Close()
+			defer func() {
+				_, _ = adminCleanup.Exec(context.Background(), "DROP TABLE IF EXISTS "+sanitizeTableName(name)+" CASCADE")
+			}()
+			_, err = NewPostgresDBCollection(name, url, client, "fake")
 			Expect(err).To(MatchError(ContainSubstring("failed to setup database")))
 			pools := rec.all()
 			Expect(pools).To(HaveLen(1))

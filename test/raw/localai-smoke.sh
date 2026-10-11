@@ -59,8 +59,7 @@ for x in s: x.bind(('127.0.0.1',0))
 print(*(x.getsockname()[1] for x in s))
 PY
 )
-set -- $ports
-backend_port=$1; api_port=$2
+backend_port=${ports%% *}; api_port=${ports##* }
 cat > "$W/model-smoke/minilm.yaml" <<YAML
 name: minilm
 backend: smoke-llama
@@ -70,6 +69,7 @@ parameters:
 context_size: 512
 threads: 2
 YAML
+sed 's/name: minilm/name: granite-embedding-107m-multilingual/' "$W/model-smoke/minilm.yaml" > "$W/model-smoke/legacy.yaml"
 (cd "$W/model-smoke"; exec "$LOCALAI_SMOKE_BACKEND" --addr "127.0.0.1:$backend_port") > "$W/logs/localai-native-smoke.log" 2>&1 &
 backend_pid=$!
 (cd "$W/model-smoke"; exec ./local-ai run --address "127.0.0.1:$api_port" --models-path "$W/model-smoke" --backends-path "$W/model-smoke/backends" --backends-system-path "$W/model-smoke/system" --data-path "$W/model-smoke/data" --localai-config-dir "$W/model-smoke/config" --external-grpc-backends "smoke-llama:127.0.0.1:$backend_port" --disable-web-ui --disable-agents) > "$W/logs/localai-provider-smoke.log" 2>&1 &
@@ -88,6 +88,13 @@ for i in range(90):
   if i==89: raise
   time.sleep(1)
 PY
+# An optional command runs only after a genuine model response, and remains
+# inside this script's owned provider lifetime. No externally supplied endpoint.
+if [ "$#" -gt 0 ]; then
+ export LOCALAI_ENDPOINT="$LOCALRECALL_SMOKE_API"
+ "$@"
+ exit $?
+fi
 cp test/raw/templates/localai_consumer_test.go.txt "$W/localai/core/services/agentpool/localrecall_smoke_test.go"
 # Preserve upstream mod/sum; resolve only in private alternate files.
 cp "$W/localai/go.mod" "$W/localai-smoke.mod"

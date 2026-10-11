@@ -1,9 +1,17 @@
 package agentpool
 
 import (
+	"context"
+	"github.com/mudler/localrecall/rag/raw"
+	rawpostgres "github.com/mudler/localrecall/rag/raw/postgres"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	urlpkg "net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mudler/LocalAGI/webui/collections"
@@ -18,6 +26,20 @@ func TestLocalRecallRealConsumer(t *testing.T) {
 	if url == "" || db == "" || os.Getenv("LOCALRECALL_TEST_DATABASE_OWNER") == "" {
 		t.Fatal("owned provider/database required")
 	}
+	target, err := urlpkg.Parse(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int64
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			calls.Add(1)
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer counting.Close()
+	url = counting.URL
 	dir := t.TempDir()
 	svc, err := NewAgentPoolService(&config.ApplicationConfig{AgentPool: config.AgentPoolConfig{
 		VectorEngine: "postgres", DatabaseURL: db, EmbeddingModel: "minilm", MaxChunkingSize: 400,
@@ -58,6 +80,41 @@ func TestLocalRecallRealConsumer(t *testing.T) {
 	if err != nil || len(results) == 0 || !strings.Contains(results[0].Content, "galaxies") {
 		t.Fatalf("search=%v err=%v", results, err)
 	}
+	if calls.Load() == 0 {
+		t.Fatal("consumer bypassed embedding counter")
+	}
+	before := calls.Load()
+	ctx := context.Background()
+	store, err := rawpostgres.New(ctx, rawpostgres.Config{DatabaseURL: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rc, _, err := store.CreateCollection(ctx, raw.CreateCollectionRequest{Name: name, Dimensions: 3, Metric: "cosine", EmbeddingSpaceID: "synthetic-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.DeleteCollection(ctx, rc.CollectionID)
+	if _, err = store.Upsert(ctx, rc.CollectionID, raw.UpsertRequest{EmbeddingSpaceID: "synthetic-v1", Records: []raw.Record{{ID: "raw", Vector: []float64{1, 0, 0}}}}); err != nil {
+		t.Fatal(err)
+	}
+	space, accuracy := "synthetic-v1", "exact"
+	if _, err = store.Search(ctx, rc.CollectionID, raw.SearchRequest{Mode: "vector", Accuracy: &accuracy, EmbeddingSpaceID: &space, Vector: []float64{1, 0, 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.GetRecords(ctx, rc.CollectionID, raw.GetRecordsRequest{IDs: []string{"raw"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Reset(ctx, rc.CollectionID); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.DeleteCollection(ctx, rc.CollectionID); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != before {
+		t.Fatalf("raw embedding traffic: before=%d after=%d", before, calls.Load())
+	}
+	t.Logf("consumer embedding calls=%d; raw lifecycle/search attributed calls=0", before)
 	if err := svc.ResetCollectionForUser("", name); err != nil {
 		t.Fatal(err)
 	}
