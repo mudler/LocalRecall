@@ -1,0 +1,4 @@
+FROM postgres:18-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential git ca-certificates postgresql-server-dev-18 postgresql-18-pgvector && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch v1.3.1 https://github.com/timescale/pg_textsearch /tmp/pg_textsearch && make -C /tmp/pg_textsearch && make -C /tmp/pg_textsearch install && rm -rf /tmp/pg_textsearch
+CMD ["postgres", "-c", "shared_preload_libraries=pg_textsearch"]
