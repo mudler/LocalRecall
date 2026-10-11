@@ -1,6 +1,7 @@
 #!/bin/sh
 # Never run legacy destructive suites against an externally selected service.
 set -eu
+python3 test/raw/confinement.py "$(pwd -P)"
 if [ "${1:-}" != --owned ]; then
  [ "$#" -eq 0 ] || exit 2
  [ -z "${LOCALRECALL_TEST_DATABASE_URL:-}" ] || exit 1

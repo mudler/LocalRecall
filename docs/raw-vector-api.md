@@ -19,7 +19,7 @@ Raw operations have a 30-second deadline and a five-second database lock timeout
 
 ## Authentication and readiness
 
-Raw routes use the existing `API_KEYS` authentication boundary. Keys do not provide collection-level authorization or tenant isolation.
+Raw routes use the existing `API_KEYS` authentication boundary. **When `API_KEYS` is unset, routes are unauthenticated. Use this mode only on a private, trusted network; do not expose it publicly.** Keys do not provide collection-level authorization or tenant isolation.
 Treat metadata filters as query predicates, not access controls. Use a trusted application gateway when users require different permissions.
 
 Read `GET /api/raw/v1/capabilities` before selecting a search mode. Implementation support and current readiness are separate fields.
@@ -108,3 +108,30 @@ The legacy planning fixture uses 2000 eight-dimensional synthetic vectors. Its p
 The real consumer fixture uses pinned LocalAI source and genuine 384-dimensional MiniLM text embeddings. Provider identity differs from consumer identity.
 Its forwarding counter measures actual consumer embedding requests and checks zero additional requests during raw operations.
 This evidence does not establish multimodal quality, large-corpus throughput, or production resource limits.
+
+### Recorded acceptance sample
+
+The owned attempt5 full gate passed, including ten race-enabled repetitions of
+outage recovery and active-query shutdown. An actual `pg_ctl stop/start` retained
+the vectors; unavailable operations returned the raw unavailable error (HTTP 503),
+and readiness became false. The supervisor keeps private tmpfs alive, and restart
+preserves the required BM25 preload. Shutdown canceled a database-lock waiter and
+released all sessions and pool connections.
+
+The real consumer overlap sample held one embedding HTTP request open for
+28.13 ms while three raw collections completed writes and exact searches.
+The counter observed exactly one legacy request and zero additional raw requests.
+Two legacy collections and one shared raw pool used three sampled database
+sessions, excluding the observer connection; the configured pool ceiling was 12.
+This is a sampled count, not a continuous peak measurement. Public catalog objects
+numbered 8 before raw bootstrap, 30 with the overlap collections, and 18 after
+removing them: 12 objects removed. The remainder includes shared raw schema and
+the second legacy collection, not leaked per-collection indexes.
+The raw lifecycle and overlap portion took 71.04 ms. These are local synthetic
+measurements, not throughput or production sizing guarantees.
+
+The filtered 600-vector fixture returned 10 of 10 results from 36 eligible rows:
+recall@10 was 1.00 and underfill was zero. Planner choice can affect this result;
+it does not establish universal ANN recall. Full EXPLAIN JSON and timings are in
+`.sdd-work/logs/full-attempt5.log`; repeated suites are in `race10.log`, legacy
+coverage in `legacy.log`, and downstream evidence in `consumer-all.log`.

@@ -2,6 +2,7 @@
 # Prerequisites and provider provenance: see test/raw/LOCALAI-SMOKE.md.
 set -eu
 ROOT=$(pwd -P)
+python3 test/raw/confinement.py "$ROOT"
 [ -f test/raw/downstream-lock.json ] || exit 1
 W="$ROOT/.sdd-work"
 [ ! -L "$W" ] || exit 1
@@ -33,8 +34,8 @@ PY
 # The archive must have been downloaded from the immutable codeload revision;
 # canonical digest recorded independently, never use the enclosing repo's HEAD.
 sha256sum "$W/localai.tar.gz" "$W/model-smoke/minilm.gguf" "$LOCALAI_SMOKE_BACKEND"
-docker image inspect localai/localai:latest --format 'provider image {{.Id}} {{json .Config.Labels}}'
 image=sha256:f1bc435659b9da49180e868fdd0361915171a740cd947bf081b62a896a7ea8d0
+docker image inspect "$image" --format 'provider image {{.Id}} {{json .Config.Labels}}'
 name="lr-embedding-$$"
 created=
 backend_pid= provider_pid=

@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 ROOT=$(pwd -P)
+python3 test/raw/confinement.py "$ROOT"
 [ -f "$ROOT/go.mod" ] && [ -d "$ROOT/rag" ] || { echo 'run from worktree root' >&2; exit 1; }
 # Reject symlinks before creating any output, including nested cache paths.
 for path in .sdd-work .sdd-work/tmp .sdd-work/cache .sdd-work/mod .sdd-work/gopath .sdd-work/collections .sdd-work/assets .sdd-work/logs; do
@@ -14,11 +15,12 @@ export GOENV=off GOTOOLCHAIN=local
 mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$GOPATH" "$COLLECTION_DB_PATH" "$FILE_ASSETS" "$ROOT/.sdd-work/logs"
 case "${1:-}" in
  all)
+  python3 test/raw/confinement_test.py
   sh test/raw/verify.sh api
   log="$ROOT/.sdd-work/logs/race10.log"
   if sh test/raw/database.sh go test -v -mod=readonly -race -count=10 -timeout=30m ./rag/raw/... ./pkg/client/... >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
   ! grep -E 'SKIP|no tests to run|no test files' "$log"
-  for suite in TestRawProcessDiscovery TestRawRecordsReplacement TestRawClient; do
+  for suite in TestRawProcessDiscovery TestRawRecordsReplacement TestRawOwnedOutage TestRawActiveShutdown TestRawClient; do
    [ "$(grep -c -- "^--- PASS: $suite (" "$log")" -eq 10 ]
   done
   go vet -mod=readonly ./rag/raw/... ./pkg/client/...

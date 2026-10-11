@@ -58,9 +58,8 @@ LocalRecall with this worktree; neither source go.mod/go.sum is edited.
 
 The successful run used PostgreSQL HNSW fallback (vectorscale was unavailable).
 It verifies text embedding compatibility, not EmbeddingGemma2 or multimodal
-quality. It does not complete Task6: concurrent raw zero-embedding accounting,
-full legacy suites, cross-process/restart regressions and the all-runner remain
-separate required gates.
+quality. The full runner additionally requires concurrent raw zero-embedding accounting,
+legacy suites, cross-process/restart regressions and shutdown cleanup.
 
 ## Evidence
 
@@ -70,3 +69,10 @@ that one-line correction, `.sdd-work/logs/localai-real-attempt3.log` reports
 `TestLocalRecallRealConsumer` PASS and owned database removal. The earlier
 compilation-only evidence is `localai-build-generated-attempt1.log`; it is not
 counted as a runtime test.
+
+Attempt5 full acceptance (`.sdd-work/logs/full-attempt5.log`) passed these gates.
+The synchronized consumer test held one embedding request open during raw work:
+28.13 ms overlap, exactly one legacy call, zero extra raw calls, three raw and two
+legacy collections. It sampled three combined database sessions against a ceiling
+of 12, excluding its observer. Catalog objects changed 8 → 30 → 18, with 12
+removed on deletion. See `docs/raw-vector-api.md` for measurement limits.
