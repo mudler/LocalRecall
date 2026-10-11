@@ -61,7 +61,7 @@ func init() {
 	sourceManager.Start()
 }
 
-func startAPI(listenAddress string) {
+func startAPI(listenAddress string) error {
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -111,16 +111,23 @@ func startAPI(listenAddress string) {
 		}
 	}
 	registerRawAPIRoutes(e, store)
-	requests, cancelRequests := context.WithCancel(context.Background())
-	e.Server.BaseContext = func(_ net.Listener) context.Context { return requests }
 	stop, cancelSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancelSignal()
+	return serveAPI(e, listenAddress, store, stop)
+}
+
+// serveAPI returns startup failures only after releasing server-owned resources.
+func serveAPI(e *echo.Echo, listenAddress string, store raw.Store, stop context.Context) error {
+	requests, cancelRequests := context.WithCancel(context.Background())
+	e.Server.BaseContext = func(_ net.Listener) context.Context { return requests }
+	var serveErr error
 	exited := make(chan error, 1)
 	go func() { exited <- e.Start(listenAddress) }()
 	select {
 	case err := <-exited:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			e.Logger.Error("HTTP server stopped")
+			serveErr = err
 		}
 	case <-stop.Done():
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -129,13 +136,17 @@ func startAPI(listenAddress string) {
 			_ = e.Close()
 		}
 		cancel()
+		<-exited
 	}
 	cancelRequests()
 	if store != nil {
 		store.Close()
 	}
+	return serveErr
 }
 
 func main() {
-	startAPI(listeningAddress)
+	if err := startAPI(listeningAddress); err != nil {
+		os.Exit(1)
+	}
 }

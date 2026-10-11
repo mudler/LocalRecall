@@ -34,8 +34,12 @@ func (c *RawClient) do(ctx context.Context, method, path string, q url.Values, b
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return 0, fmt.Errorf("invalid raw API base URL")
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/raw/v1" + path
-	u.RawPath = ""
+	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/api/raw/v1" + path
+	u.Path, err = url.PathUnescape(escapedPath)
+	if err != nil {
+		return 0, err
+	}
+	u.RawPath = escapedPath
 	u.RawQuery = q.Encode()
 	var reader io.Reader
 	if body != nil {
@@ -65,9 +69,12 @@ func (c *RawClient) do(ctx context.Context, method, path string, q url.Values, b
 		Data    json.RawMessage `json:"data"`
 		Error   *raw.Error      `json:"error"`
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
 	if err != nil {
 		return resp.StatusCode, err
+	}
+	if len(b) > 32<<20 {
+		return resp.StatusCode, fmt.Errorf("raw API response exceeds 32 MiB")
 	}
 	if err = json.Unmarshal(b, &envelope); err != nil {
 		return resp.StatusCode, fmt.Errorf("invalid raw API response (HTTP %d)", resp.StatusCode)

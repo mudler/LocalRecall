@@ -22,6 +22,8 @@ func rawFailure(c echo.Context, err error) error {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		e = raw.NewError(raw.CodeTimeout)
+		// Do not drain an incomplete timed-out body before sending the error.
+		c.Response().Header().Set("Connection", "close")
 	}
 	return c.JSON(e.Status, struct {
 		Success bool       `json:"success"`
@@ -69,6 +71,22 @@ func registerRawAPIRoutes(e *echo.Echo, store raw.Store) {
 			ctx, cancel := context.WithTimeout(c.Request().Context(), 30*time.Second)
 			defer cancel()
 			c.SetRequest(c.Request().WithContext(ctx))
+			// Incoming Body.Read does not observe context cancellation. Interrupt
+			// the transport only for raw requests, including early cancellation.
+			controller := http.NewResponseController(c.Response().Writer)
+			interrupted := make(chan struct{})
+			stop := context.AfterFunc(ctx, func() {
+				_ = controller.SetReadDeadline(time.Now())
+				close(interrupted)
+			})
+			defer func() {
+				if !stop() {
+					<-interrupted
+				}
+				// Do not leak a raw deadline into a subsequent keep-alive request.
+				_ = controller.SetReadDeadline(time.Time{})
+			}()
+
 			if store == nil && c.Path() != "/api/raw/v1/capabilities" {
 				if vectorEngine != "postgres" {
 					return rawFailure(c, raw.NewError(raw.CodeUnsupported))

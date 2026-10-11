@@ -66,3 +66,27 @@ func TestRawClientSafety(t *testing.T) {
 		t.Fatal(calls)
 	}
 }
+
+func TestRawClientResponseOverflow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The first 32 MiB are valid JSON plus whitespace; truncation hides junk.
+		prefix := `{"success":true,"data":{}}`
+		w.Write([]byte(prefix + strings.Repeat(" ", (32<<20)-len(prefix)) + "x"))
+	}))
+	defer srv.Close()
+	if _, err := NewRawClient(srv.URL, "", srv.Client()).Capabilities(context.Background()); err == nil {
+		t.Fatal("oversized response accepted")
+	}
+}
+func TestRawClientEncodedPrefix(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/tenant%2Fprivate/api/raw/v1/capabilities" {
+			t.Errorf("prefix semantics changed: %s", r.URL.EscapedPath())
+		}
+		w.Write([]byte(`{"success":true,"data":{}}`))
+	}))
+	defer srv.Close()
+	if _, err := NewRawClient(srv.URL+"/tenant%2Fprivate", "", srv.Client()).Capabilities(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
