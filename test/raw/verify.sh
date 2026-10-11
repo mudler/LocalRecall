@@ -13,6 +13,18 @@ export COLLECTION_DB_PATH="$ROOT/.sdd-work/collections" FILE_ASSETS="$ROOT/.sdd-
 export GOENV=off GOTOOLCHAIN=local
 mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$GOPATH" "$COLLECTION_DB_PATH" "$FILE_ASSETS" "$ROOT/.sdd-work/logs"
 case "${1:-}" in
+ api)
+  sh test/raw/verify.sh search
+  log="$ROOT/.sdd-work/logs/api-$(date +%s)-$$.log"
+  if sh test/raw/database.sh go test -v -mod=readonly -race -count=1 -timeout=10m -run '^TestRaw' . >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  for suite in HTTPValidation HTTPAuthAndReadiness APILifecycle; do grep -q -- "--- PASS: TestRaw${suite}" "$log"; done
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  log="$ROOT/.sdd-work/logs/api-client-$(date +%s)-$$.log"
+  if go test -v -mod=readonly -race -count=1 ./pkg/client/... >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  grep -q -- '--- PASS: TestRawClient' "$log"
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  git diff --check
+  ;;
  search)
   sh test/raw/verify.sh records
   log="$ROOT/.sdd-work/logs/search-$(date +%s)-$$.log"
@@ -50,5 +62,5 @@ case "${1:-}" in
   [ "$(grep -c '^ok[[:space:]]' "$log")" -eq 2 ] && ! grep -E '\[no test files\]|\[no tests to run\]' "$log"
   git diff --check
   ;;
- *) echo 'usage: sh test/raw/verify.sh contracts|lifecycle|records|search' >&2; exit 2;;
+ *) echo 'usage: sh test/raw/verify.sh contracts|lifecycle|records|search|api' >&2; exit 2;;
 esac

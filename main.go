@@ -1,9 +1,18 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"github.com/mudler/localrecall/rag/raw"
+	rawpostgres "github.com/mudler/localrecall/rag/raw/postgres"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -89,7 +98,42 @@ func startAPI(listenAddress string) {
 
 	registerAPIRoutes(e, openAIClient, chunkingSize, overlap, keys)
 
-	e.Logger.Fatal(e.Start(listenAddress))
+	// The raw pool belongs to this server, independently of legacy collections.
+	var store raw.Store
+	if vectorEngine == "postgres" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		service, err := rawpostgres.New(ctx, rawpostgres.Config{DatabaseURL: os.Getenv("DATABASE_URL")})
+		cancel()
+		if err != nil {
+			e.Logger.Error("Raw PostgreSQL unavailable")
+		} else {
+			store = service
+		}
+	}
+	registerRawAPIRoutes(e, store)
+	requests, cancelRequests := context.WithCancel(context.Background())
+	e.Server.BaseContext = func(_ net.Listener) context.Context { return requests }
+	stop, cancelSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancelSignal()
+	exited := make(chan error, 1)
+	go func() { exited <- e.Start(listenAddress) }()
+	select {
+	case err := <-exited:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			e.Logger.Error("HTTP server stopped")
+		}
+	case <-stop.Done():
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := e.Shutdown(ctx); err != nil {
+			cancelRequests()
+			_ = e.Close()
+		}
+		cancel()
+	}
+	cancelRequests()
+	if store != nil {
+		store.Close()
+	}
 }
 
 func main() {
