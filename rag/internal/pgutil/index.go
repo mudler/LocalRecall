@@ -25,7 +25,7 @@ func Vector(v []float32) string {
 }
 func ResolveTextConfig(ctx context.Context, db DB, name string) (string, error) {
 	var v string
-	err := db.QueryRow(ctx, `SELECT n.nspname || '.' || c.cfgname FROM pg_ts_config c JOIN pg_namespace n ON n.oid=c.cfgnamespace WHERE c.oid=$1::regconfig`, name).Scan(&v)
+	err := db.QueryRow(ctx, `SELECT format('%I.%I', n.nspname, c.cfgname) FROM pg_ts_config c JOIN pg_namespace n ON n.oid=c.cfgnamespace WHERE c.oid=$1::regconfig`, name).Scan(&v)
 	return v, err
 }
 func HasAccessMethod(ctx context.Context, db DB, name string) bool {
@@ -33,6 +33,9 @@ func HasAccessMethod(ctx context.Context, db DB, name string) bool {
 	err := db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_am WHERE amname=$1)`, name).Scan(&yes)
 	return err == nil && yes
 }
+
+// VectorIndexSQL requires trusted SQL identifier fragments for table, index and
+// column (for dynamic identifiers, use pgx.Identifier.Sanitize).
 func VectorIndexSQL(table, index, column string, diskANN bool) string {
 	method := "hnsw (" + column + " vector_cosine_ops)"
 	if diskANN {
@@ -40,6 +43,9 @@ func VectorIndexSQL(table, index, column string, diskANN bool) string {
 	}
 	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s USING %s", index, table, method)
 }
+
+// BM25IndexSQL requires trusted SQL identifier fragments for table, index and
+// column. config is a value and is escaped as a SQL string literal.
 func BM25IndexSQL(table, index, column, config string) string {
 	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s USING bm25 (%s) WITH (text_config='%s')", index, table, column, strings.ReplaceAll(config, "'", "''"))
 }

@@ -83,13 +83,13 @@ func dbError(e error) error {
 	}
 	return raw.NewError(raw.CodeUnavailable)
 }
-func (s *Service) transaction(ctx context.Context, fn func(context.Context, pgx.Tx) error) error {
+func (s *Service) transaction(ctx context.Context, isolation pgx.TxIsoLevel, fn func(context.Context, pgx.Tx) error) error {
 	ctx, done, e := s.operation(ctx)
 	if e != nil {
 		return e
 	}
 	defer done()
-	tx, e := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	tx, e := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: isolation})
 	if e != nil {
 		return dbError(e)
 	}

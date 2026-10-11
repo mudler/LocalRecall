@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mudler/localrecall/rag/internal/pgutil"
 	"github.com/mudler/localrecall/rag/raw"
 	"os"
@@ -36,7 +38,13 @@ func (s *Service) CreateCollection(ctx context.Context, r raw.CreateCollectionRe
 	if lex.Enabled {
 		lex.TextConfig, e = pgutil.ResolveTextConfig(ctx, tx, lex.TextConfig)
 		if e != nil {
-			return c, false, raw.NewError(raw.CodeValidation)
+			// Only malformed or unknown catalog names are caller errors.
+			// Cancellation, privileges and dependency failures retain dbError mapping.
+			var pe *pgconn.PgError
+			if errors.As(e, &pe) && (pe.Code == "42704" || pe.Code == "42602" || pe.Code == "42601" || pe.Code == "3F000") {
+				return c, false, raw.NewError(raw.CodeValidation)
+			}
+			return c, false, dbError(e)
 		}
 	}
 	c, e = scan(tx.QueryRow(ctx, "SELECT "+columns+" FROM lr_raw_collections WHERE name=$1", r.Name))
@@ -76,14 +84,17 @@ func (s *Service) CreateCollection(ctx context.Context, r raw.CreateCollectionRe
 	return c, true, nil
 }
 func (s *Service) GetCollection(ctx context.Context, id string) (c raw.Collection, err error) {
-	err = s.transaction(ctx, func(ctx context.Context, tx pgx.Tx) error { var e error; c, e = lookup(ctx, tx, id); return e })
+	err = s.transaction(ctx, pgx.RepeatableRead, func(ctx context.Context, tx pgx.Tx) error { var e error; c, e = lookup(ctx, tx, id); return e })
 	if err != nil {
 		c = raw.Collection{}
 	}
 	return
 }
 func (s *Service) Reset(ctx context.Context, id string) error {
-	return s.transaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
+	// Each statement needs a fresh snapshot: inserts committed after lookup
+	// but before DELETE must be cleared. lookup holds the relation lock until
+	// commit, protecting table lifetime without blocking independent writers.
+	return s.transaction(ctx, pgx.ReadCommitted, func(ctx context.Context, tx pgx.Tx) error {
 		c, e := lookup(ctx, tx, id)
 		if e != nil {
 			return e
@@ -94,7 +105,7 @@ func (s *Service) Reset(ctx context.Context, id string) error {
 	})
 }
 func (s *Service) DeleteCollection(ctx context.Context, id string) error {
-	return s.transaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
+	return s.transaction(ctx, pgx.ReadCommitted, func(ctx context.Context, tx pgx.Tx) error {
 		c, e := lookup(ctx, tx, id)
 		if e != nil {
 			return e
@@ -119,7 +130,7 @@ func (s *Service) ListCollections(ctx context.Context, r raw.ListCollectionsRequ
 			return p, e
 		}
 	}
-	err = s.transaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.transaction(ctx, pgx.RepeatableRead, func(ctx context.Context, tx pgx.Tx) error {
 		if e := schemaVersion(ctx, tx); e != nil {
 			return e
 		}
