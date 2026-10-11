@@ -1,0 +1,69 @@
+package agentpool
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mudler/LocalAGI/webui/collections"
+	"github.com/mudler/LocalAI/core/config"
+)
+
+// This fixture is copied into the pinned actual consumer package. It uses
+// the same collection construction as startDistributed, without starting
+// unrelated agent schedulers, messaging or skills services.
+func TestLocalRecallRealConsumer(t *testing.T) {
+	url, db := os.Getenv("LOCALRECALL_SMOKE_API"), os.Getenv("LOCALRECALL_TEST_DATABASE_URL")
+	if url == "" || db == "" || os.Getenv("LOCALRECALL_TEST_DATABASE_OWNER") == "" {
+		t.Fatal("owned provider/database required")
+	}
+	dir := t.TempDir()
+	svc, err := NewAgentPoolService(&config.ApplicationConfig{AgentPool: config.AgentPoolConfig{
+		VectorEngine: "postgres", DatabaseURL: db, EmbeddingModel: "minilm", MaxChunkingSize: 400,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := svc.buildCollectionsConfig(url, "", filepath.Join(dir, "collections"), filepath.Join(dir, "assets"))
+	inner, state := collections.NewInProcessBackend(cfg)
+	svc.collectionsBackend = svc.shareCollections(inner, state, cfg)
+	defer func() {
+		svc.collectionsBackend.(*sharedCollections).Close()
+		state.SourceManager.Stop()
+		for _, kb := range state.Collections {
+			if kb != nil {
+				kb.Close()
+			}
+		}
+	}()
+	const name = "real-consumer"
+	if err := svc.CreateCollectionForUser("", name); err != nil {
+		t.Fatal(err)
+	}
+	const text = "The observatory telescope studies distant galaxies and bright stars."
+	entry, err := svc.UploadToCollectionForUser("", name, "astronomy.txt", strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := svc.ListCollectionEntriesForUser("", name)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries=%v err=%v", entries, err)
+	}
+	content, chunks, err := svc.GetCollectionEntryContentForUser("", name, entry)
+	if err != nil || !strings.Contains(content, "galaxies") || chunks < 1 {
+		t.Fatalf("content=%q chunks=%d err=%v", content, chunks, err)
+	}
+	results, err := svc.SearchCollectionForUser("", name, "telescope galaxies", 3)
+	if err != nil || len(results) == 0 || !strings.Contains(results[0].Content, "galaxies") {
+		t.Fatalf("search=%v err=%v", results, err)
+	}
+	if err := svc.ResetCollectionForUser("", name); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = svc.ListCollectionEntriesForUser("", name)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("reset entries=%v err=%v", entries, err)
+	}
+	t.Log("actual agentpool construction, upload, entry, real-embedding search and reset passed")
+}
