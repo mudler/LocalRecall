@@ -13,6 +13,16 @@ export COLLECTION_DB_PATH="$ROOT/.sdd-work/collections" FILE_ASSETS="$ROOT/.sdd-
 export GOENV=off GOTOOLCHAIN=local
 mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$GOPATH" "$COLLECTION_DB_PATH" "$FILE_ASSETS" "$ROOT/.sdd-work/logs"
 case "${1:-}" in
+ records)
+  sh test/raw/verify.sh lifecycle
+  log="$ROOT/.sdd-work/logs/records-$(date +%s)-$$.log"
+  if sh test/raw/database.sh go test -v -mod=readonly -race -count=1 -timeout=10m ./rag/raw/postgres/... -run "^(TestRaw(Records|Concurrency|Cursor|DeleteBound))" >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  for suite in Records Concurrency Cursor DeleteBound; do
+   grep -q -- "--- PASS: TestRaw${suite}" "$log"
+  done
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  git diff --check
+  ;;
  lifecycle)
   sh test/raw/verify.sh contracts
   go test -v -mod=readonly -race -count=1 ./rag/internal/pgutil/...
@@ -30,5 +40,5 @@ case "${1:-}" in
   [ "$(grep -c '^ok[[:space:]]' "$log")" -eq 2 ] && ! grep -E '\[no test files\]|\[no tests to run\]' "$log"
   git diff --check
   ;;
- *) echo 'usage: sh test/raw/verify.sh contracts|lifecycle' >&2; exit 2;;
+ *) echo 'usage: sh test/raw/verify.sh contracts|lifecycle|records' >&2; exit 2;;
 esac
