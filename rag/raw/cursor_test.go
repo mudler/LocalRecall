@@ -7,6 +7,45 @@ import (
 	"testing"
 )
 
+func TestRawCursorMaxLengthIDRoundTrip(t *testing.T) {
+	cid := descriptor().CollectionID
+	for _, tc := range []struct {
+		name string
+		unit string
+	}{
+		{"less_than", "<"},
+		{"greater_than", ">"},
+		{"ampersand", "&"},
+		{"quote", "\""},
+		{"backslash", "\\"},
+		{"mixed_escapes", "<>&\"\\"},
+		{"two_byte_unicode", "é"},
+		{"three_byte_unicode", "界"},
+		{"four_byte_unicode", "😀"},
+		{"line_separator", "\u2028"},
+		{"paragraph_separator", "\u2029"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := strings.Repeat(tc.unit, 256/len(tc.unit))
+			id += strings.Repeat("x", 256-len(id))
+			if len(id) != 256 || ValidateID(id) != nil {
+				t.Fatal("fixture must be a valid maximum-length ID")
+			}
+			encoded, err := EncodeRecordCursor(cid, id, nil, false)
+			if err != nil {
+				t.Fatal("encode maximum-length ID:", err)
+			}
+			if len(encoded) > MaxCursorBytes {
+				t.Fatalf("cursor length %d exceeds %d", len(encoded), MaxCursorBytes)
+			}
+			decoded, err := DecodeRecordCursor(encoded, cid, nil, false)
+			if err != nil || decoded != id {
+				t.Fatalf("round trip: got %q, error %v", decoded, err)
+			}
+		})
+	}
+}
+
 func TestRawCursorUntrusted(t *testing.T) {
 	cid := descriptor().CollectionID
 	c, _ := EncodeRecordCursor(cid, "last", nil, false)

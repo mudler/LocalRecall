@@ -1,6 +1,7 @@
 package raw
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -49,11 +50,15 @@ func binding(f *Filter, v bool) (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 func encode(c cursor) (string, error) {
-	b, e := json.Marshal(c)
-	if e != nil {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	// Cursors are base64, not HTML. Without HTML escaping, valid IDs expand
+	// at most 2x (quotes, backslashes, or U+2028/U+2029), fitting the cap.
+	enc.SetEscapeHTML(false)
+	if e := enc.Encode(c); e != nil {
 		return "", NewError(CodeCursor)
 	}
-	s := base64.RawURLEncoding.EncodeToString(b)
+	s := base64.RawURLEncoding.EncodeToString(bytes.TrimSuffix(b.Bytes(), []byte{'\n'}))
 	if len(s) > MaxCursorBytes {
 		return "", NewError(CodeCursor)
 	}
