@@ -22,7 +22,7 @@ run: build
 
 .PHONY: test test-unit test-integration test-e2e test-all test-coverage
 .PHONY: start-localai stop-localai wait-localai
-.PHONY: start-test-services stop-test-services
+.PHONY: start-test-services stop-test-services test-raw-image
 
 # Start LocalAI service for unit/integration tests
 start-localai:
@@ -109,9 +109,12 @@ stop-test-services:
 test:
 	@go test -coverprofile=coverage.txt -covermode=atomic -v ./...
 
-test-unit: start-test-services
+test-raw-image:
+	@docker build -t localrecall-raw-task2-a5975c8 -f test/raw/Dockerfile.postgres .
+
+test-unit: start-test-services test-raw-image
 	@echo "Running unit tests..."
-	@LOCALAI_ENDPOINT=http://localhost:8081 go test -v ./rag/... ./pkg/...; \
+	@LOCALAI_ENDPOINT=http://localhost:8081 sh test/raw/unit.sh; \
 	test_exit=$$?; \
 	$(MAKE) stop-test-services; \
 	exit $$test_exit
@@ -125,9 +128,9 @@ test-integration: start-test-services
 
 test-e2e: prepare-e2e run-e2e clean-e2e
 
-test-all: start-test-services
+test-all: start-test-services test-raw-image
 	@echo "Running all tests..."
-	@LOCALAI_ENDPOINT=http://localhost:8081 go test -v ./rag/... ./pkg/...; \
+	@LOCALAI_ENDPOINT=http://localhost:8081 sh test/raw/unit.sh; \
 	unit_exit=$$?; \
 	INTEGRATION=true LOCALAI_ENDPOINT=http://localhost:8081 go test -v ./test/integration/...; \
 	integration_exit=$$?; \
@@ -207,5 +210,6 @@ clean-test-services: stop-test-services
 	@echo "Cleaning up test services..."
 	@docker compose rm -f localai postgres || true
 
-run-e2e:
-	@E2E=true LOCALAI_ENDPOINT=http://localhost:8081 LOCALRECALL_ENDPOINT=http://localhost:8080 go test -v -timeout 30m ./test/e2e/...
+run-e2e: test-raw-image
+	@E2E=true LOCALAI_ENDPOINT=http://localhost:8081 LOCALRECALL_ENDPOINT=http://localhost:8080 go test -v -count=1 -timeout 30m ./test/e2e/...
+	@LOCALAI_ENDPOINT=http://localhost:8081 EMBEDDING_MODEL=$(EMBEDDING_MODEL) sh test/raw/database.sh sh test/raw/legacy.sh --owned --e2e-only

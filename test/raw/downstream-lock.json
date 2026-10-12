@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/mudler/LocalAI",
+  "revision": "d4a5af8bfed9c97e8cb01e584f1f9f8a572df844",
+  "localrecall_required_version": "v0.6.7-0.20261006203612-d7c99211a3c7",
+  "localrecall_baseline": "d7c99211a3c7d6721a841fe34938e934f9d8aeee",
+  "consuming_packages": ["github.com/mudler/LocalAI/core/services/agentpool"],
+  "imports": {
+    "core/services/agentpool/collections_shared.go": ["github.com/mudler/localrecall/rag/engine"],
+    "core/services/agentpool/collections_shared_test.go": ["github.com/mudler/localrecall/rag", "github.com/mudler/localrecall/rag/sources"]
+  },
+  "production_calls": ["engine.PostgresCollectionExists", "engine.ListPostgresCollections"],
+  "test_calls": ["rag.NewSourceManager", "rag.PersistentKB", "sources.Config"],
+  "inspection": "Read-only git ls-remote HEAD and immutable GitHub go.mod/full source archive; all Go import call sites inspected. Actual LocalAI, not LocalAI-store. LocalAI also embeds collections through github.com/mudler/LocalAGI/webui/collections.",
+  "downstream_build_verified": false
+}

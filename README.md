@@ -21,6 +21,12 @@ Currently, LocalRecall is batteries included and supports multiple vector databa
 
 It can easily integrate with LocalAI, LocalAGI, and other agent frameworks, offering an intuitive web UI for convenient file management, including support for raw text inputs.
 
+## Caller-supplied vectors
+
+The PostgreSQL-only `/api/raw/v1` API stores caller-supplied vectors without invoking an embedding model.
+It supports vector, BM25, and hybrid retrieval in a namespace separate from legacy collections.
+See the [raw vector API guide](docs/raw-vector-api.md) for deployment, request examples, consistency limits, and verification.
+
 ## 📚🆕 Local Stack Family
 
 🆕 LocalAI is now part of a comprehensive suite of AI tools designed to work together:

@@ -1,9 +1,18 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"github.com/mudler/localrecall/rag/raw"
+	rawpostgres "github.com/mudler/localrecall/rag/raw/postgres"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -52,7 +61,7 @@ func init() {
 	sourceManager.Start()
 }
 
-func startAPI(listenAddress string) {
+func startAPI(listenAddress string) error {
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -89,9 +98,55 @@ func startAPI(listenAddress string) {
 
 	registerAPIRoutes(e, openAIClient, chunkingSize, overlap, keys)
 
-	e.Logger.Fatal(e.Start(listenAddress))
+	// The raw pool belongs to this server, independently of legacy collections.
+	var store raw.Store
+	if vectorEngine == "postgres" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		service, err := rawpostgres.New(ctx, rawpostgres.Config{DatabaseURL: os.Getenv("DATABASE_URL")})
+		cancel()
+		if err != nil {
+			e.Logger.Error("Raw PostgreSQL unavailable")
+		} else {
+			store = service
+		}
+	}
+	registerRawAPIRoutes(e, store)
+	stop, cancelSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancelSignal()
+	return serveAPI(e, listenAddress, store, stop)
+}
+
+// serveAPI returns startup failures only after releasing server-owned resources.
+func serveAPI(e *echo.Echo, listenAddress string, store raw.Store, stop context.Context) error {
+	requests, cancelRequests := context.WithCancel(context.Background())
+	e.Server.BaseContext = func(_ net.Listener) context.Context { return requests }
+	var serveErr error
+	exited := make(chan error, 1)
+	go func() { exited <- e.Start(listenAddress) }()
+	select {
+	case err := <-exited:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			e.Logger.Error("HTTP server stopped")
+			serveErr = err
+		}
+	case <-stop.Done():
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := e.Shutdown(ctx); err != nil {
+			cancelRequests()
+			_ = e.Close()
+		}
+		cancel()
+		<-exited
+	}
+	cancelRequests()
+	if store != nil {
+		store.Close()
+	}
+	return serveErr
 }
 
 func main() {
-	startAPI(listeningAddress)
+	if err := startAPI(listeningAddress); err != nil {
+		os.Exit(1)
+	}
 }

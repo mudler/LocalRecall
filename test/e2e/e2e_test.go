@@ -115,9 +115,11 @@ var _ = Describe("API", func() {
 		Expect(err).To(BeNil())
 
 		docs, err := localRecall.Search(TestCollection, "spiders", 1)
-		Expect(err).To(HaveOccurred())
-		Expect(docs).To(BeNil())
-		Expect(err.Error()).To(ContainSubstring("failed to search collection"))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(docs).To(BeEmpty())
+		entries, err := localRecall.ListEntries(TestCollection)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(entries).To(BeEmpty())
 	})
 
 	It("should be able to delete documents", func() {

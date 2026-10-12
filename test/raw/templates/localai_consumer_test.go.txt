@@ -1,0 +1,244 @@
+package agentpool
+
+import (
+	"context"
+	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/mudler/localrecall/rag/raw"
+	rawpostgres "github.com/mudler/localrecall/rag/raw/postgres"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	urlpkg "net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/mudler/LocalAGI/webui/collections"
+	"github.com/mudler/LocalAI/core/config"
+)
+
+// This fixture is copied into the pinned actual consumer package. It uses
+// the same collection construction as startDistributed, without starting
+// unrelated agent schedulers, messaging or skills services.
+func TestLocalRecallRealConsumer(t *testing.T) {
+	url, db := os.Getenv("LOCALRECALL_SMOKE_API"), os.Getenv("LOCALRECALL_TEST_DATABASE_URL")
+	if url == "" || db == "" || os.Getenv("LOCALRECALL_TEST_DATABASE_OWNER") == "" {
+		t.Fatal("owned provider/database required")
+	}
+	target, err := urlpkg.Parse(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int64
+	var hold atomic.Bool
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			calls.Add(1)
+			if hold.Load() {
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		counting.Close()
+	}()
+	url = counting.URL
+	dir := t.TempDir()
+	svc, err := NewAgentPoolService(&config.ApplicationConfig{AgentPool: config.AgentPoolConfig{
+		VectorEngine: "postgres", DatabaseURL: db, EmbeddingModel: "minilm", MaxChunkingSize: 400,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := svc.buildCollectionsConfig(url, "", filepath.Join(dir, "collections"), filepath.Join(dir, "assets"))
+	inner, state := collections.NewInProcessBackend(cfg)
+	svc.collectionsBackend = svc.shareCollections(inner, state, cfg)
+	defer func() {
+		svc.collectionsBackend.(*sharedCollections).Close()
+		state.SourceManager.Stop()
+		for _, kb := range state.Collections {
+			if kb != nil {
+				kb.Close()
+			}
+		}
+	}()
+	const name = "real-consumer"
+	if err := svc.CreateCollectionForUser("", name); err != nil {
+		t.Fatal(err)
+	}
+	const text = "The observatory telescope studies distant galaxies and bright stars."
+	entry, err := svc.UploadToCollectionForUser("", name, "astronomy.txt", strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := svc.ListCollectionEntriesForUser("", name)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries=%v err=%v", entries, err)
+	}
+	content, chunks, err := svc.GetCollectionEntryContentForUser("", name, entry)
+	if err != nil || !strings.Contains(content, "galaxies") || chunks < 1 {
+		t.Fatalf("content=%q chunks=%d err=%v", content, chunks, err)
+	}
+	results, err := svc.SearchCollectionForUser("", name, "telescope galaxies", 3)
+	if err != nil || len(results) == 0 || !strings.Contains(results[0].Content, "galaxies") {
+		t.Fatalf("search=%v err=%v", results, err)
+	}
+	if calls.Load() == 0 {
+		t.Fatal("consumer bypassed embedding counter")
+	}
+	before := calls.Load()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	admin, err := pgx.Connect(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	peak := 0
+	sample := func() {
+		var n int
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > peak {
+			peak = n
+		}
+	}
+	catalog := func() int {
+		var n int
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM pg_class WHERE relnamespace='public'::regnamespace").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	baselineCatalog := catalog()
+	start := time.Now()
+	store, err := rawpostgres.New(ctx, rawpostgres.Config{DatabaseURL: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rc, _, err := store.CreateCollection(ctx, raw.CreateCollectionRequest{Name: name, Dimensions: 3, Metric: "cosine", EmbeddingSpaceID: "synthetic-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.DeleteCollection(ctx, rc.CollectionID)
+	if _, err = store.Upsert(ctx, rc.CollectionID, raw.UpsertRequest{EmbeddingSpaceID: "synthetic-v1", Records: []raw.Record{{ID: "raw", Vector: []float64{1, 0, 0}}}}); err != nil {
+		t.Fatal(err)
+	}
+	space, accuracy := "synthetic-v1", "exact"
+	if _, err = store.Search(ctx, rc.CollectionID, raw.SearchRequest{Mode: "vector", Accuracy: &accuracy, EmbeddingSpaceID: &space, Vector: []float64{1, 0, 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.GetRecords(ctx, rc.CollectionID, raw.GetRecordsRequest{IDs: []string{"raw"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Reset(ctx, rc.CollectionID); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.DeleteCollection(ctx, rc.CollectionID); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != before {
+		t.Fatalf("raw embedding traffic: before=%d after=%d", before, calls.Load())
+	}
+	t.Logf("serial consumer embedding calls=%d; raw lifecycle/search attributed calls=0", before)
+	// Hold an actual consumer embedding HTTP request while raw database work
+	// completes. Only the consumer receives this dedicated forwarding endpoint;
+	// raw Service has no HTTP client or endpoint. Exact delta attributes overlap.
+	if err := svc.CreateCollectionForUser("", "real-consumer-second"); err != nil {
+		t.Fatal(err)
+	}
+	before = calls.Load()
+	hold.Store(true)
+	legacyDone := make(chan error, 1)
+	go func() { _, e := svc.SearchCollectionForUser("", name, "telescope galaxies", 3); legacyDone <- e }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("consumer never entered embedding proxy")
+	}
+	overlapStart := time.Now()
+	rawIDs := []string{}
+	for i := 0; i < 3; i++ {
+		rc, _, e := store.CreateCollection(ctx, raw.CreateCollectionRequest{Name: fmt.Sprintf("overlap-%d", i), Dimensions: 3, Metric: "cosine", EmbeddingSpaceID: "synthetic-v1"})
+		if e != nil {
+			t.Fatal(e)
+		}
+		rawIDs = append(rawIDs, rc.CollectionID)
+		if _, e = store.Upsert(ctx, rc.CollectionID, raw.UpsertRequest{EmbeddingSpaceID: "synthetic-v1", Records: []raw.Record{{ID: "raw", Vector: []float64{1, 0, 0}}}}); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = store.Search(ctx, rc.CollectionID, raw.SearchRequest{Mode: "vector", Accuracy: &accuracy, EmbeddingSpaceID: &space, Vector: []float64{1, 0, 0}}); e != nil {
+			t.Fatal(e)
+		}
+		sample()
+	}
+	highCatalog := catalog()
+	if calls.Load() != before+1 {
+		t.Fatalf("overlap attribution: %d -> %d", before, calls.Load())
+	}
+	for _, id := range rawIDs {
+		if e := store.DeleteCollection(ctx, id); e != nil {
+			t.Fatal(e)
+		}
+	}
+	finalCatalog := catalog()
+	overlapElapsed := time.Since(overlapStart)
+	close(release)
+	hold.Store(false)
+	select {
+	case e := <-legacyDone:
+		if e != nil {
+			t.Fatal(e)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("consumer did not finish")
+	}
+	if calls.Load() != before+1 {
+		t.Fatal("unexpected embedding traffic")
+	}
+	// Default four per pool: one raw plus two loaded legacy collections.
+	if peak < 3 || peak > 12 {
+		t.Fatalf("combined sampled pool peak=%d budget=12", peak)
+	}
+	if highCatalog <= finalCatalog {
+		t.Fatal("no index/catalog lifecycle observed")
+	}
+	t.Logf("operational fixture raw_collections=3 legacy_collections=2 overlap_requests=1 overlap_duration=%s legacy_calls=1 raw_calls=0 combined_sampled_pool_peak=%d configured_budget=12 catalog_before=%d catalog_high=%d catalog_after=%d catalog_removed=%d elapsed=%s", overlapElapsed, peak, baselineCatalog, highCatalog, finalCatalog, highCatalog-finalCatalog, time.Since(start))
+	if err := svc.ResetCollectionForUser("", name); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = svc.ListCollectionEntriesForUser("", name)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("reset entries=%v err=%v", entries, err)
+	}
+	t.Log("actual agentpool construction, upload, entry, real-embedding search and reset passed")
+}

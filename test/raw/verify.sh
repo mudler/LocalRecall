@@ -1,0 +1,84 @@
+#!/bin/sh
+set -eu
+ROOT=$(pwd -P)
+python3 test/raw/confinement.py "$ROOT"
+[ -f "$ROOT/go.mod" ] && [ -d "$ROOT/rag" ] || { echo 'run from worktree root' >&2; exit 1; }
+# Reject symlinks before creating any output, including nested cache paths.
+for path in .sdd-work .sdd-work/tmp .sdd-work/cache .sdd-work/mod .sdd-work/gopath .sdd-work/collections .sdd-work/assets .sdd-work/logs; do
+ if [ -L "$path" ] || { [ -d "$path" ] && [ "$path" != .sdd-work ] && [ -n "$(find "$path" -type l -print -quit)" ]; }; then
+  echo "symlinks in output path $path are not permitted" >&2; exit 1
+ fi
+done
+export TMPDIR="$ROOT/.sdd-work/tmp" GOCACHE="$ROOT/.sdd-work/cache" GOMODCACHE="$ROOT/.sdd-work/mod" GOPATH="$ROOT/.sdd-work/gopath"
+export COLLECTION_DB_PATH="$ROOT/.sdd-work/collections" FILE_ASSETS="$ROOT/.sdd-work/assets"
+export GOENV=off GOTOOLCHAIN=local
+mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$GOPATH" "$COLLECTION_DB_PATH" "$FILE_ASSETS" "$ROOT/.sdd-work/logs"
+case "${1:-}" in
+ all)
+  python3 test/raw/confinement_test.py
+  sh test/raw/verify.sh api
+  log="$ROOT/.sdd-work/logs/race10.log"
+  if sh test/raw/database.sh go test -v -mod=readonly -race -count=10 -timeout=30m ./rag/raw/... ./pkg/client/... >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  ! grep -E 'SKIP|no tests to run|no test files' "$log"
+  for suite in TestRawProcessDiscovery TestRawRecordsReplacement TestRawOwnedOutage TestRawActiveShutdown TestRawClient; do
+   [ "$(grep -c -- "^--- PASS: $suite (" "$log")" -eq 10 ]
+  done
+  go vet -mod=readonly ./rag/raw/... ./pkg/client/...
+  sh test/raw/legacy.sh
+  log="$ROOT/.sdd-work/logs/consumer-all.log"
+  if sh test/raw/localai-smoke.sh >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  grep -q -- '--- PASS: TestLocalRecallRealConsumer' "$log"
+  ! grep -E 'SKIP|no tests to run|no test files' "$log"
+  git diff --check
+  ;;
+ api)
+  sh test/raw/verify.sh search
+  log="$ROOT/.sdd-work/logs/api-$(date +%s)-$$.log"
+  if sh test/raw/database.sh go test -v -mod=readonly -race -count=1 -timeout=10m -run '^TestRaw' . >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  for suite in HTTPValidation HTTPAuthAndReadiness APILifecycle; do grep -q -- "--- PASS: TestRaw${suite}" "$log"; done
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  log="$ROOT/.sdd-work/logs/api-client-$(date +%s)-$$.log"
+  if go test -v -mod=readonly -race -count=1 ./pkg/client/... >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  grep -q -- '--- PASS: TestRawClient' "$log"
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  git diff --check
+  ;;
+ search)
+  sh test/raw/verify.sh records
+  log="$ROOT/.sdd-work/logs/search-$(date +%s)-$$.log"
+  if sh test/raw/database.sh go test -v -mod=readonly -race -count=1 -timeout=10m ./rag/raw/postgres/... -run "^(TestRaw(Search|Explain|Recall))" >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  for suite in Search Explain Recall; do
+   grep -q -- "--- PASS: TestRaw${suite}" "$log"
+  done
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  git diff --check
+  ;;
+ records)
+  sh test/raw/verify.sh lifecycle
+  log="$ROOT/.sdd-work/logs/records-$(date +%s)-$$.log"
+  if sh test/raw/database.sh go test -v -mod=readonly -race -count=1 -timeout=10m ./rag/raw/postgres/... -run "^(TestRaw(Records|Concurrency|Cursor|DeleteBound))" >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  for suite in Records Concurrency Cursor DeleteBound; do
+   grep -q -- "--- PASS: TestRaw${suite}" "$log"
+  done
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  git diff --check
+  ;;
+ lifecycle)
+  sh test/raw/verify.sh contracts
+  go test -v -mod=readonly -race -count=1 ./rag/internal/pgutil/...
+  log="$ROOT/.sdd-work/logs/lifecycle-$(date +%s)-$$.log"
+  if sh test/raw/database.sh go test -v -mod=readonly -race -count=1 -timeout=10m ./rag/raw/postgres/... -run "^(TestRaw(Lifecycle|Bootstrap|Capabilities|Pool|LegacyHelpers))" >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  for suite in Lifecycle Bootstrap Capabilities Pool LegacyHelpers; do
+   grep -q -- "--- PASS: TestRaw${suite}" "$log"
+  done
+  ! grep -E "SKIP|no tests to run|no test files" "$log"
+  git diff --check
+  ;;
+ contracts)
+  log="$ROOT/.sdd-work/logs/contracts-$(date +%s)-$$.log"
+  if go test -mod=readonly -race -count=1 ./rag/raw ./test/raw >"$log" 2>&1; then cat "$log"; else cat "$log"; exit 1; fi
+  [ "$(grep -c '^ok[[:space:]]' "$log")" -eq 2 ] && ! grep -E '\[no test files\]|\[no tests to run\]' "$log"
+  git diff --check
+  ;;
+ *) echo 'usage: sh test/raw/verify.sh contracts|lifecycle|records|search|api|all' >&2; exit 2;;
+esac

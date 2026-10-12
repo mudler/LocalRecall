@@ -59,7 +59,10 @@ var _ = Describe("PostgresDB", func() {
 
 		// Use PostgreSQL from docker-compose
 		// Connection string for docker-compose postgres service
-		databaseURL = "postgresql://localrecall:localrecall@localhost:5432/localrecall?sslmode=disable"
+		databaseURL = os.Getenv("LOCALRECALL_TEST_DATABASE_URL")
+		if databaseURL == "" {
+			databaseURL = "postgresql://localrecall:localrecall@localhost:5432/localrecall?sslmode=disable"
+		}
 
 		// Verify PostgreSQL is accessible
 		ctx := context.Background()
