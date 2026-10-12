@@ -2,6 +2,8 @@ package e2e_test
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"time"
@@ -250,47 +252,37 @@ var _ = Describe("SourceManager", func() {
 		})
 
 		It("should prevent duplicate content with frequent updates", func() {
-			// Add a source with a very short update interval
-			err := sourceManager.AddSource(TestCollection, "https://en.wikipedia.org/wiki/Black-crowned_barwing", 1*time.Second)
-			Expect(err).To(BeNil())
-
-			// Start the background service
+			// Fixed, sub-chunk-size content: public Wikipedia revisions changed the
+			// old expected count. The real fetch/parser/embed/store path stays intact.
+			fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, "<html><body><article>The Black-crowned barwing is a bird of mountain forests. It feeds on insects and fruit.</article></body></html>")
+			}))
+			defer fixture.Close()
+			Expect(sourceManager.AddSource(TestCollection, fixture.URL, time.Second)).To(Succeed())
 			sourceManager.Start()
 
-			// Wait for initial content to be fetched
-			Eventually(func() []string {
-				return kb.ListDocuments()
-			}, 2*time.Minute, 5*time.Second).Should(HaveLen(1))
-
-			// Wait for initial content to be fetched
-			Eventually(func() int {
-				return kb.Count()
-			}, 2*time.Minute, 5*time.Second).Should(Equal(25))
-
-			// Let it run for 2 minutes and check for duplicates
-			Consistently(func() int {
-				return kb.Count()
-			}, 3*time.Minute, 5*time.Second).Should(Equal(25))
-
-			// Verify that search results don't contain duplicates
-			Consistently(func() bool {
-				results, err := kb.Search("What is the Black-crowned barwing?", 5)
-				if err != nil {
-					fmt.Println("Error searching for content", err)
-					return false
-				}
-
-				// Check for duplicate content
-				seen := make(map[string]bool)
-				for _, r := range results {
-					if seen[r.Content] {
-						fmt.Println("Found a duplicate", r.Content)
-						return false // Found a duplicate
+			// StoreOrReplace publishes a fresh UUID document key under the KB lock
+			// only after replacing chunks. A changed key proves a completed update;
+			// LastUpdate is set BEFORE fetching and cannot prove successful storage.
+			previous := ""
+			for cycle := 0; cycle < 3; cycle++ {
+				Eventually(func() string {
+					docs := kb.ListDocuments()
+					if len(docs) != 1 || docs[0] == previous {
+						return ""
 					}
-					seen[r.Content] = true
-				}
-				return true
-			}, 2*time.Minute, 5*time.Second).Should(BeTrue())
+					return docs[0]
+				}, 90*time.Second, TestPollingInterval).ShouldNot(BeEmpty())
+				docs := kb.ListDocuments()
+				Expect(docs).To(HaveLen(1))
+				previous = docs[0]
+				Expect(kb.Count()).To(Equal(1), "chunk count after completed update %d", cycle+1)
+				results, err := kb.Search("What is the Black-crowned barwing?", 1)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(results).To(HaveLen(1))
+				Expect(results[0].Content).To(ContainSubstring("Black-crowned barwing"))
+			}
+
 		})
 	})
 

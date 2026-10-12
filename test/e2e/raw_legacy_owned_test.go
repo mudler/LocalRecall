@@ -1,3 +1,5 @@
+//go:build ownedintegration
+
 package e2e_test
 
 import (

@@ -47,6 +47,7 @@ SQL
 port=$(docker port "$name" 5432/tcp | sed -n 's/^127\.0\.0\.1://p')
 case "$port" in ''|*[!0-9]*) exit 1;; esac
 export LOCALRECALL_TEST_DATABASE_URL="postgres://postgres:$token@127.0.0.1:$port/raw_fixture?sslmode=disable"
+export POSTGRES_TEST_URL="$LOCALRECALL_TEST_DATABASE_URL"
 export LOCALRECALL_TEST_DATABASE_OWNER="$token"
 export LOCALRECALL_TEST_DATABASE_CONTAINER="$name"
 printf 'Owned fixture %s at loopback port %s (removed on exit)\n' "$name" "$port"
