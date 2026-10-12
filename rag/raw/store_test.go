@@ -1,6 +1,9 @@
 package raw
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestRawErrorStatuses(t *testing.T) {
 	for _, tc := range []struct {
@@ -23,5 +26,14 @@ func TestRawErrorStatuses(t *testing.T) {
 	e := NewError("secret database error")
 	if e.Code != CodeInternal || e.Error() != "Internal error" {
 		t.Fatal(e)
+	}
+}
+
+func TestRawErrorClassification(t *testing.T) {
+	if !errors.Is(NewError(CodeTimeout), NewError(CodeTimeout)) {
+		t.Fatal("classification lost")
+	}
+	if errors.Is(NewError(CodeTimeout), NewError(CodeUnavailable)) {
+		t.Fatal("different codes match")
 	}
 }

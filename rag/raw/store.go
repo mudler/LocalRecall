@@ -44,6 +44,13 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// Is compares public classifications, not messages or transport status.
+func (e *Error) Is(target error) bool {
+	other, ok := target.(*Error)
+	return ok && e != nil && other != nil && e.Code == other.Code
+}
+
 func NewError(code string) *Error {
 	e := &Error{Code: code}
 	switch code {

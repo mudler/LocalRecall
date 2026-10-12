@@ -69,16 +69,24 @@ func (c *RawClient) do(ctx context.Context, method, path string, q url.Values, b
 		Data    json.RawMessage `json:"data"`
 		Error   *raw.Error      `json:"error"`
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
-	if err != nil {
-		return resp.StatusCode, err
+	// Decode from a bounded stream rather than allocating the theoretical cap.
+	limit := rawResponseLimit(method, path)
+	readerLimit := &io.LimitedReader{R: resp.Body, N: limit + 1}
+	decoder := json.NewDecoder(readerLimit)
+	decodeErr := decoder.Decode(&envelope)
+	// Drain the remaining bounded stream, including decoder read-ahead. This
+	// detects overflow even when a complete JSON value precedes excess bytes.
+	_, drainErr := io.Copy(rawJSONWhitespace{}, io.MultiReader(decoder.Buffered(), readerLimit))
+	if readerLimit.N == 0 {
+		return resp.StatusCode, fmt.Errorf("raw API response exceeds %d bytes", limit)
 	}
-	if len(b) > 32<<20 {
-		return resp.StatusCode, fmt.Errorf("raw API response exceeds 32 MiB")
+	if drainErr != nil {
+		return resp.StatusCode, drainErr
 	}
-	if err = json.Unmarshal(b, &envelope); err != nil {
+	if decodeErr != nil {
 		return resp.StatusCode, fmt.Errorf("invalid raw API response (HTTP %d)", resp.StatusCode)
 	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !envelope.Success {
 		if envelope.Error != nil {
 			e := raw.NewError(envelope.Error.Code)
@@ -92,6 +100,43 @@ func (c *RawClient) do(ctx context.Context, method, path string, q url.Values, b
 	}
 	return resp.StatusCode, err
 }
+
+// Bounds cover compact server JSON. Strings can expand to six bytes per input
+// byte; metadata already has a serialized-byte limit. 32 bytes per vector
+// component covers every finite float32 spelling plus its comma. Per-item slack
+// covers keys, punctuation, scores/ranks, timestamps and other scalar fields.
+const (
+	rawItemOverhead     int64 = 2048
+	rawEnvelopeOverhead int64 = 4096 + 6*raw.MaxCursorBytes
+	rawRecordBytes      int64 = 6*(raw.MaxTextBytes+raw.MaxIDBytes) + raw.MaxMetadataBytes + 32*raw.MaxDimensions + rawItemOverhead
+	// Disabled lexical indexing retains text_config without catalog resolution;
+	// its existing validation limit is MaxBodyBytes, not PostgreSQL name length.
+	rawCollectionBytes int64 = 6*(raw.MaxBodyBytes+raw.MaxNameBytes+raw.MaxSpaceIDBytes) + rawItemOverhead
+)
+
+func rawResponseLimit(method, path string) int64 {
+	switch {
+	case path == "/collections" && method == http.MethodGet:
+		return rawEnvelopeOverhead + raw.MaxListLimit*rawCollectionBytes
+	case path == "/collections" || (strings.HasPrefix(path, "/collections/") && strings.Count(path, "/") == 2):
+		return rawEnvelopeOverhead + rawCollectionBytes
+	default:
+		return rawEnvelopeOverhead + int64(max(raw.MaxBatch, raw.MaxListLimit, raw.MaxTopK))*rawRecordBytes
+	}
+}
+
+// Write checks trailing JSON whitespace with constant additional memory.
+type rawJSONWhitespace struct{}
+
+func (rawJSONWhitespace) Write(p []byte) (int, error) {
+	for _, c := range p {
+		if c != ' ' && c != '\n' && c != '\r' && c != '\t' {
+			return 0, fmt.Errorf("invalid trailing raw API response data")
+		}
+	}
+	return len(p), nil
+}
+
 func rawCollectionPath(cid string) (string, error) {
 	id, err := uuid.Parse(cid)
 	if err != nil || id.String() != cid {

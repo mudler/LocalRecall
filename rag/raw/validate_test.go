@@ -2,6 +2,7 @@ package raw
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -186,5 +187,97 @@ func TestRawError(t *testing.T) {
 	b, _ := json.Marshal(e)
 	if !strings.Contains(string(b), `"code"`) {
 		t.Fatal(string(b))
+	}
+}
+
+// Capabilities must describe the same inclusive boundaries as library validation.
+func TestRawContractLimitsParity(t *testing.T) {
+	l := ContractLimits()
+	create := CreateCollectionRequest{Name: "n", Dimensions: 1, Metric: "cosine", EmbeddingSpaceID: "s"}
+	for _, tc := range []struct {
+		name  string
+		max   int
+		check func(int) error
+	}{
+		{"name", l.NameBytes, func(n int) error { r := create; r.Name = strings.Repeat("n", n); return ValidateCreate(r) }},
+		{"space", l.SpaceIDBytes, func(n int) error { r := create; r.EmbeddingSpaceID = strings.Repeat("s", n); return ValidateCreate(r) }},
+		{"dimensions", l.Dimensions, func(n int) error { r := create; r.Dimensions = n; return ValidateCreate(r) }},
+		{"id", l.IDBytes, func(n int) error { return ValidateID(strings.Repeat("i", n)) }},
+		{"batch", l.Batch, func(n int) error {
+			ids := make([]string, n)
+			for i := range ids {
+				ids[i] = fmt.Sprint(i)
+			}
+			return ValidateIDs(ids)
+		}},
+		{"text", l.TextBytes, func(n int) error {
+			_, err := ValidateUpsert(descriptor(), UpsertRequest{EmbeddingSpaceID: "s", Records: []Record{{ID: "i", Vector: []float64{1, 0}, Text: ptr(strings.Repeat("t", n))}}})
+			return err
+		}},
+		{"metadata keys", l.MetadataKeys, func(n int) error {
+			m := map[string]string{}
+			for i := 0; i < n; i++ {
+				m[fmt.Sprint(i)] = "v"
+			}
+			return validateMetadata(m, l.MetadataKeys)
+		}},
+		{"metadata key", l.MetadataKeyBytes, func(n int) error {
+			return validateMetadata(map[string]string{strings.Repeat("k", n): "v"}, l.MetadataKeys)
+		}},
+		{"metadata value", l.MetadataValueBytes, func(n int) error {
+			return validateMetadata(map[string]string{"k": strings.Repeat("v", n)}, l.MetadataKeys)
+		}},
+		{"filter", l.FilterPredicates, func(n int) error {
+			m := map[string]string{}
+			for i := 0; i < n; i++ {
+				m[fmt.Sprint(i)] = "v"
+			}
+			return ValidateFilter(&Filter{MetadataEq: m})
+		}},
+		{"list", l.ListMax, func(n int) error { _, err := ValidateLimit(&n); return err }},
+		{"top k", l.TopKMax, func(n int) error {
+			_, err := ValidateSearch(descriptor(), SearchRequest{Mode: "lexical", Text: ptr("q"), TopK: &n})
+			return err
+		}},
+		{"query", l.QueryTextBytes, func(n int) error {
+			_, err := ValidateSearch(descriptor(), SearchRequest{Mode: "lexical", Text: ptr(strings.Repeat("q", n))})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.check(tc.max); err != nil {
+				t.Fatalf("advertised maximum rejected: %v", err)
+			}
+			if tc.check(tc.max+1) == nil {
+				t.Fatal("maximum+1 accepted")
+			}
+		})
+	}
+	if n, err := ValidateLimit(nil); err != nil || n != l.ListDefault {
+		t.Fatal("list default parity", n, err)
+	}
+	if r, err := ValidateSearch(descriptor(), SearchRequest{Mode: "lexical", Text: ptr("q")}); err != nil || *r.TopK != l.TopKDefault {
+		t.Fatal("search default parity", r, err)
+	}
+	// An exact serialized metadata boundary, with each individual value within its limit.
+	m := map[string]string{}
+	for i := 0; i < 15; i++ {
+		m[fmt.Sprintf("%02d", i)] = strings.Repeat("v", l.MetadataValueBytes)
+	}
+	m["last"] = ""
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m["last"] = strings.Repeat("v", l.MetadataBytes-len(b))
+	if err := validateMetadata(m, l.MetadataKeys); err != nil {
+		t.Fatal(err)
+	}
+	m["last"] += "v"
+	if validateMetadata(m, l.MetadataKeys) == nil {
+		t.Fatal("serialized metadata maximum+1 accepted")
+	}
+	if l.BodyBytes != MaxBodyBytes || l.CursorBytes != MaxCursorBytes || l.DeleteMatches != MaxDeleteMatches {
+		t.Fatal("shared limit parity")
 	}
 }

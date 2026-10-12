@@ -1,18 +1,32 @@
 // Package raw defines embedder-free caller-supplied vector contracts.
 package raw
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
-	MaxBodyBytes        = 8 << 20
-	MaxDimensions       = 2000
-	MaxBatch            = 100
-	MaxTextBytes        = 64 << 10
-	MaxMetadataBytes    = 16 << 10
-	MaxFilterPredicates = 8
-	MaxDeleteMatches    = 1000
-	MaxCursorBytes      = 2048
-	SchemaVersion       = 1
+	MaxNameBytes          = 128
+	MaxSpaceIDBytes       = 256
+	MaxIDBytes            = 256
+	MaxMetadataKeys       = 32
+	MaxMetadataKeyBytes   = 64
+	MaxMetadataValueBytes = 1024
+	DefaultListLimit      = 50
+	MaxListLimit          = 100
+	DefaultTopK           = 10
+	MaxTopK               = 100
+	MaxQueryTextBytes     = 4096
+	MaxBodyBytes          = 8 << 20
+	MaxDimensions         = 2000
+	MaxBatch              = 100
+	MaxTextBytes          = 64 << 10
+	MaxMetadataBytes      = 16 << 10
+	MaxFilterPredicates   = 8
+	MaxDeleteMatches      = 1000
+	MaxCursorBytes        = 2048
+	SchemaVersion         = 1
 )
 
 type LexicalConfig struct {
@@ -192,5 +206,39 @@ type Capabilities struct {
 }
 
 func ContractLimits() Limits {
-	return Limits{MaxBodyBytes, MaxDimensions, 128, 256, 256, MaxTextBytes, 32, 64, 1024, MaxMetadataBytes, MaxBatch, MaxFilterPredicates, MaxDeleteMatches, 50, 100, MaxCursorBytes, 10, 100, 4096}
+	return Limits{
+		BodyBytes: MaxBodyBytes, Dimensions: MaxDimensions, NameBytes: MaxNameBytes,
+		SpaceIDBytes: MaxSpaceIDBytes, IDBytes: MaxIDBytes, TextBytes: MaxTextBytes,
+		MetadataKeys: MaxMetadataKeys, MetadataKeyBytes: MaxMetadataKeyBytes,
+		MetadataValueBytes: MaxMetadataValueBytes, MetadataBytes: MaxMetadataBytes,
+		Batch: MaxBatch, FilterPredicates: MaxFilterPredicates, DeleteMatches: MaxDeleteMatches,
+		ListDefault: DefaultListLimit, ListMax: MaxListLimit, CursorBytes: MaxCursorBytes,
+		TopKDefault: DefaultTopK, TopKMax: MaxTopK, QueryTextBytes: MaxQueryTextBytes,
+	}
+}
+
+// MarshalJSON preserves the distinction between absent and explicitly empty IDs.
+func (r DeleteRecordsRequest) MarshalJSON() ([]byte, error) {
+	type plain DeleteRecordsRequest
+	var ids *[]string
+	if r.IDs != nil {
+		ids = &r.IDs
+	}
+	return json.Marshal(struct {
+		plain
+		IDs *[]string `json:"ids,omitempty"`
+	}{plain: plain(r), IDs: ids})
+}
+
+// MarshalJSON preserves vector presence for search-mode exclusivity checks.
+func (r SearchRequest) MarshalJSON() ([]byte, error) {
+	type plain SearchRequest
+	var vector *[]float64
+	if r.Vector != nil {
+		vector = &r.Vector
+	}
+	return json.Marshal(struct {
+		plain
+		Vector *[]float64 `json:"vector,omitempty"`
+	}{plain: plain(r), Vector: vector})
 }

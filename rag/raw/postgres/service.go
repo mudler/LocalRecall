@@ -3,6 +3,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -69,19 +70,44 @@ func (s *Service) Close() {
 		s.pool.Close()
 	})
 }
+
+// databaseError retains only allowlisted public information, never the cause.
+// In particular, wrapping a raw.Error must not retain an unsafe outer message.
+type databaseError struct {
+	public   *raw.Error
+	canceled bool
+	deadline bool
+}
+
+func (e *databaseError) Error() string { return e.public.Error() }
+func (e *databaseError) Unwrap() error { return e.public }
+func (e *databaseError) Is(target error) bool {
+	return (target == context.Canceled && e.canceled) ||
+		(target == context.DeadlineExceeded && e.deadline)
+}
+func (e *databaseError) MarshalJSON() ([]byte, error) { return json.Marshal(e.public) }
+
 func dbError(e error) error {
 	if e == nil {
 		return nil
 	}
+	safe := &databaseError{
+		canceled: errors.Is(e, context.Canceled),
+		deadline: errors.Is(e, context.DeadlineExceeded),
+	}
+	code := raw.CodeUnavailable
 	var r *raw.Error
-	if errors.As(e, &r) {
-		return e
-	}
 	var p *pgconn.PgError
-	if errors.Is(e, context.DeadlineExceeded) || errors.Is(e, context.Canceled) || (errors.As(e, &p) && (p.Code == "57014" || p.Code == "55P03")) {
-		return raw.NewError(raw.CodeTimeout)
+	switch {
+	case errors.As(e, &r) && r != nil:
+		code = r.Code
+	case safe.canceled || safe.deadline:
+		code = raw.CodeTimeout
+	case errors.As(e, &p) && p != nil && (p.Code == "57014" || p.Code == "55P03"):
+		code = raw.CodeTimeout
 	}
-	return raw.NewError(raw.CodeUnavailable)
+	safe.public = raw.NewError(code)
+	return safe
 }
 func (s *Service) transaction(ctx context.Context, isolation pgx.TxIsoLevel, fn func(context.Context, pgx.Tx) error) error {
 	ctx, done, e := s.operation(ctx)

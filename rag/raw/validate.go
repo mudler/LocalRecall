@@ -16,7 +16,7 @@ func validString(s string, max int) bool {
 	return len(s) <= max && utf8.ValidString(s) && !strings.ContainsRune(s, 0)
 }
 func ValidateCreate(r CreateCollectionRequest) error {
-	if !validString(r.Name, 128) || r.Name == "" || r.Dimensions < 1 || r.Dimensions > MaxDimensions || r.Metric != "cosine" || !validString(r.EmbeddingSpaceID, 256) || r.EmbeddingSpaceID == "" {
+	if !validString(r.Name, MaxNameBytes) || r.Name == "" || r.Dimensions < 1 || r.Dimensions > MaxDimensions || r.Metric != "cosine" || !validString(r.EmbeddingSpaceID, MaxSpaceIDBytes) || r.EmbeddingSpaceID == "" {
 		return invalid()
 	}
 	if r.Lexical != nil && r.Lexical.TextConfig != nil && (!validString(*r.Lexical.TextConfig, MaxBodyBytes) || *r.Lexical.TextConfig == "") {
@@ -77,7 +77,7 @@ func NormalizeVector(v []float64, dimensions int) ([]float32, error) {
 	return out, nil
 }
 func ValidateID(id string) error {
-	if id == "" || !validString(id, 256) {
+	if id == "" || !validString(id, MaxIDBytes) {
 		return invalid()
 	}
 	for _, r := range id {
@@ -105,7 +105,7 @@ func validateMetadata(m map[string]string, maxKeys int) error {
 		return invalid()
 	}
 	for k, v := range m {
-		if !validString(k, 64) || !validString(v, 1024) {
+		if !validString(k, MaxMetadataKeyBytes) || !validString(v, MaxMetadataValueBytes) {
 			return invalid()
 		}
 	}
@@ -134,7 +134,7 @@ func ValidateUpsert(d Collection, r UpsertRequest) ([]CanonicalRecord, error) {
 		if v.Text != nil && !validString(*v.Text, MaxTextBytes) {
 			return nil, invalid()
 		}
-		if e := validateMetadata(v.Metadata, 32); e != nil {
+		if e := validateMetadata(v.Metadata, MaxMetadataKeys); e != nil {
 			return nil, e
 		}
 		vec, e := NormalizeVector(v.Vector, d.Dimensions)
@@ -174,9 +174,9 @@ func ValidateDelete(r DeleteRecordsRequest) error {
 }
 func ValidateLimit(n *int) (int, error) {
 	if n == nil {
-		return 50, nil
+		return DefaultListLimit, nil
 	}
-	if *n < 1 || *n > 100 {
+	if *n < 1 || *n > MaxListLimit {
 		return 0, invalid()
 	}
 	return *n, nil
@@ -185,11 +185,11 @@ func ValidateSearch(d Collection, r SearchRequest) (SearchRequest, error) {
 	if e := ValidateFilter(r.Filter); e != nil {
 		return r, e
 	}
-	k := 10
+	k := DefaultTopK
 	if r.TopK != nil {
 		k = *r.TopK
 	}
-	if k < 1 || k > 100 {
+	if k < 1 || k > MaxTopK {
 		return r, invalid()
 	}
 	r.TopK = &k
@@ -207,7 +207,7 @@ func ValidateSearch(d Collection, r SearchRequest) (SearchRequest, error) {
 		return r, invalid()
 	}
 	if r.Mode != "vector" {
-		if r.Text == nil || !validString(*r.Text, 4096) || strings.TrimSpace(*r.Text) == "" {
+		if r.Text == nil || !validString(*r.Text, MaxQueryTextBytes) || strings.TrimSpace(*r.Text) == "" {
 			return r, invalid()
 		}
 		if !d.Lexical.Enabled {
