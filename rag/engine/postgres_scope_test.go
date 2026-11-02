@@ -182,6 +182,65 @@ var _ = Describe("Explicit PostgreSQL scopes", func() {
 		Expect(second.Count()).To(Equal(0))
 	})
 
+	It("executes scoped hybrid BM25 with de_en when extensions live outside public", func() {
+		ctx := context.Background()
+		database := fmt.Sprintf("scope_extensions_%d", time.Now().UnixNano())
+		_, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{database}.Sanitize())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_, e := admin.Exec(ctx, "DROP DATABASE "+pgx.Identifier{database}.Sanitize()+" WITH (FORCE)")
+			Expect(e).NotTo(HaveOccurred())
+		})
+		u, err := url.Parse(raw)
+		Expect(err).NotTo(HaveOccurred())
+		u.Path = "/" + database
+		u.RawQuery = "sslmode=disable"
+		raw = u.String()
+		conn, err := pgx.Connect(ctx, raw)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(conn.Close(ctx)).To(Succeed()) })
+		_, err = conn.Exec(ctx, `CREATE SCHEMA extensions; CREATE EXTENSION vector WITH SCHEMA extensions; CREATE EXTENSION pg_textsearch WITH SCHEMA extensions`)
+		Expect(err).NotTo(HaveOccurred())
+		previous, had := os.LookupEnv("BM25_TEXT_CONFIG")
+		Expect(os.Setenv("BM25_TEXT_CONFIG", "de_en")).To(Succeed())
+		DeferCleanup(func() {
+			if had {
+				Expect(os.Setenv("BM25_TEXT_CONFIG", previous)).To(Succeed())
+			} else {
+				Expect(os.Unsetenv("BM25_TEXT_CONFIG")).To(Succeed())
+			}
+		})
+		pa, pb := open("hybrid", a), open("hybrid", b)
+		var path string
+		Expect(pa.pool.QueryRow(ctx, "SHOW search_path").Scan(&path)).To(Succeed())
+		Expect(path).NotTo(ContainSubstring("public"))
+		Expect(pa.bm25TextConfig).To(Equal("public.de_en"))
+		Expect(pa.tsVectorConfig(ctx)).To(Equal("public.de_en"))
+		_, err = pa.Store("alpha private document", nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pb.Store("beta private document", nil)
+		Expect(err).NotTo(HaveOccurred())
+		for _, item := range []struct {
+			p    *PostgresDB
+			want string
+		}{{pa, "alpha private document"}, {pb, "beta private document"}} {
+			// Execute hybrid SQL directly: Search's vector fallback cannot mask failure.
+			rows, e := item.p.pool.Query(ctx, buildScopedHybridSearchQuery(item.p.tableName, item.p.scope.relation(item.p.indexBase("bm25"))), "private", 0.5, "[1,0,0,0]", 0.5, 10)
+			Expect(e).NotTo(HaveOccurred())
+			var contents []string
+			for rows.Next() {
+				var id, title, content string
+				var metadata []byte
+				var score float64
+				Expect(rows.Scan(&id, &title, &content, &metadata, &score)).To(Succeed())
+				contents = append(contents, content)
+			}
+			Expect(rows.Err()).NotTo(HaveOccurred())
+			rows.Close()
+			Expect(contents).To(Equal([]string{item.want}))
+		}
+	})
+
 	It("isolates same-name documents, registry and memory fences across scopes", func() {
 		name := fmt.Sprintf("scope_same_%d", time.Now().UnixNano())
 		pa, pb := open(name, a), open(name, b)
@@ -195,6 +254,8 @@ var _ = Describe("Explicit PostgreSQL scopes", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ha).To(HaveLen(1))
 		Expect(hb).To(HaveLen(1))
+		Expect(ha[0].Content).To(Equal("alpha private document"))
+		Expect(hb[0].Content).To(Equal("beta private document"))
 		ctx := context.Background()
 		write := func(p *PostgresDB, content string) StorageMemoryReceipt {
 			f, e := p.BeginMemoryAttempt(ctx, "same-key", "owner")

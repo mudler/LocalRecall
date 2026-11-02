@@ -385,7 +385,7 @@ func (p *PostgresDB) setupDatabase() error {
 // want for a German/English mixed document corpus. Built-in single-language
 // configs (e.g. "german", "english") are used as-is.
 func (p *PostgresDB) ensureTextSearchConfig(ctx context.Context) error {
-	if p.bm25TextConfig != "de_en" {
+	if p.bm25TextConfig != "de_en" && p.bm25TextConfig != "public.de_en" {
 		return nil
 	}
 	_, err := p.pool.Exec(ctx, `
@@ -399,6 +399,11 @@ func (p *PostgresDB) ensureTextSearchConfig(ctx context.Context) error {
 			END IF;
 		END $$;
 	`)
+	if err == nil && p.scope.Schema != "" {
+		// Provisioning is deliberately in public, which need not be in the
+		// catalog-derived extension path. Bind the config, not a fallback path.
+		p.bm25TextConfig = "public.de_en"
+	}
 	return err
 }
 
@@ -833,8 +838,11 @@ func (p *PostgresDB) tsVectorConfig(ctx context.Context) string {
 		return p.tsCfg
 	}
 	var ok bool
-	if err := p.pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = $1)`, name).Scan(&ok); err != nil {
+	lookup := `SELECT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = $1)`
+	if p.scope.Schema != "" {
+		lookup = `SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_ts_config WHERE oid=$1::pg_catalog.regconfig)`
+	}
+	if err := p.pool.QueryRow(ctx, lookup, name).Scan(&ok); err != nil {
 		xlog.Warn("Could not verify text search config, using 'simple' for now", "config", name, "error", err)
 		return "simple"
 	}
