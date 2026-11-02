@@ -44,11 +44,27 @@ func queryRegistry(ctx context.Context, databaseURL string, fn func(conn *pgx.Co
 
 // PostgresCollectionExists reports whether a collection is registered in the
 // shared database. It does not create anything.
-func PostgresCollectionExists(ctx context.Context, databaseURL, name string) (bool, error) {
+func PostgresCollectionExists(ctx context.Context, databaseURL, name string, scopes ...PostgresScope) (bool, error) {
+	scope, err := resolvePostgresScope(scopes)
+	if err != nil {
+		return false, err
+	}
 	var exists bool
-	err := queryRegistry(ctx, databaseURL, func(conn *pgx.Conn) error {
+	err = queryRegistry(ctx, databaseURL, func(conn *pgx.Conn) error {
+		if scope.Schema != "" {
+			var exists bool
+			if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname=$1)`, scope.Schema).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return nil
+			}
+			if err := verifyPostgresScope(ctx, conn, scope); err != nil {
+				return err
+			}
+		}
 		return conn.QueryRow(ctx,
-			"SELECT EXISTS (SELECT 1 FROM collection_config WHERE collection_name = $1)", name).Scan(&exists)
+			"SELECT EXISTS (SELECT 1 FROM "+scope.relation("collection_config")+" WHERE collection_name = $1)", name).Scan(&exists)
 	})
 	if isUndefinedTable(err) {
 		return false, nil
@@ -58,10 +74,26 @@ func PostgresCollectionExists(ctx context.Context, databaseURL, name string) (bo
 
 // ListPostgresCollections returns the names of all collections registered in
 // the shared database, sorted by name.
-func ListPostgresCollections(ctx context.Context, databaseURL string) ([]string, error) {
+func ListPostgresCollections(ctx context.Context, databaseURL string, scopes ...PostgresScope) ([]string, error) {
+	scope, err := resolvePostgresScope(scopes)
+	if err != nil {
+		return nil, err
+	}
 	var names []string
-	err := queryRegistry(ctx, databaseURL, func(conn *pgx.Conn) error {
-		rows, err := conn.Query(ctx, "SELECT collection_name FROM collection_config ORDER BY collection_name")
+	err = queryRegistry(ctx, databaseURL, func(conn *pgx.Conn) error {
+		if scope.Schema != "" {
+			var exists bool
+			if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname=$1)`, scope.Schema).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return nil
+			}
+			if err := verifyPostgresScope(ctx, conn, scope); err != nil {
+				return err
+			}
+		}
+		rows, err := conn.Query(ctx, "SELECT collection_name FROM "+scope.relation("collection_config")+" ORDER BY collection_name")
 		if err != nil {
 			return err
 		}
@@ -87,7 +119,7 @@ func ListPostgresCollections(ctx context.Context, databaseURL string) ([]string,
 func (p *PostgresDB) Exists(ctx context.Context) (bool, error) {
 	var exists bool
 	err := p.pool.QueryRow(ctx,
-		"SELECT EXISTS (SELECT 1 FROM collection_config WHERE collection_name = $1)", p.collectionName).Scan(&exists)
+		"SELECT EXISTS (SELECT 1 FROM "+p.scope.relation("collection_config")+" WHERE collection_name = $1)", p.collectionName).Scan(&exists)
 	if isUndefinedTable(err) {
 		return false, nil
 	}

@@ -19,17 +19,19 @@ import (
 )
 
 type PostgresDB struct {
-	pool            *pgxpool.Pool
-	collectionName  string
-	tableName       string
-	client          *openai.Client
-	embeddingsModel string
-	embeddingDims   int
-	bm25Weight      float64
-	vectorWeight    float64
-	bm25TextConfig  string
-	tsCfg           string
-	tsCfgMu         sync.Mutex
+	extensionPathReady bool
+	scope              PostgresScope
+	pool               *pgxpool.Pool
+	collectionName     string
+	tableName          string
+	client             *openai.Client
+	embeddingsModel    string
+	embeddingDims      int
+	bm25Weight         float64
+	vectorWeight       float64
+	bm25TextConfig     string
+	tsCfg              string
+	tsCfgMu            sync.Mutex
 }
 
 // newPool opens a connection pool. Tests replace it to observe the pool
@@ -43,7 +45,11 @@ var newPool = pgxpool.NewWithConfig
 // retries on each request (for example while the embedding model is down)
 // does not pile up idle server connections until PostgreSQL refuses new
 // clients.
-func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *openai.Client, embeddingsModel string) (_ *PostgresDB, err error) {
+func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *openai.Client, embeddingsModel string, scopes ...PostgresScope) (_ *PostgresDB, err error) {
+	scope, err := resolvePostgresScope(scopes)
+	if err != nil {
+		return nil, err
+	}
 	if databaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required for PostgreSQL engine")
 	}
@@ -54,6 +60,11 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		return nil, fmt.Errorf("failed to parse database URL: %w", err)
 	}
 
+	if scope.Schema != "" {
+		// Extension objects are installed/resolved in public, never in a tenant.
+		// Relations remain explicitly qualified even with public visible.
+		config.ConnConfig.RuntimeParams["search_path"] = "pg_catalog,public"
+	}
 	// Apply per-connection safety timeouts before opening the pool.
 	applyConnTimeouts(config, os.Getenv)
 	applyPoolLimits(config, os.Getenv)
@@ -73,9 +84,14 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
 	// From here on, close the pool on every error return.
+	var constructed *PostgresDB
 	defer func() {
 		if err != nil {
-			pool.Close()
+			if constructed != nil {
+				constructed.pool.Close()
+			} else {
+				pool.Close()
+			}
 		}
 	}()
 
@@ -106,10 +122,15 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		bm25TextConfig = cfg
 	}
 
+	tableBase := sanitizeTableName(collectionName)
+	if scope.Schema != "" {
+		tableBase = NewPostgresScope(collectionName).Schema
+	}
 	pg := &PostgresDB{
+		scope:           scope,
 		pool:            pool,
 		collectionName:  collectionName,
-		tableName:       sanitizeTableName(collectionName),
+		tableName:       scope.relation(tableBase),
 		client:          openaiClient,
 		embeddingsModel: embeddingsModel,
 		embeddingDims:   embeddingDims,
@@ -118,8 +139,9 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		bm25TextConfig:  bm25TextConfig,
 	}
 
+	constructed = pg
 	// Serialize additive catalog initialization across independent pools/processes.
-	schemaConn, err := pgx.Connect(context.Background(), databaseURL)
+	schemaConn, err := pgx.ConnectConfig(context.Background(), config.ConnConfig.Copy())
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +150,9 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		return nil, err
 	}
 	defer schemaConn.Exec(context.Background(), "SELECT pg_advisory_unlock(719258039183)")
+	if err := pg.initializeScope(context.Background(), schemaConn); err != nil {
+		return nil, err
+	}
 	// Setup database (extensions, tables, indexes)
 	if err := pg.setupDatabase(); err != nil {
 		return nil, fmt.Errorf("failed to setup database: %w", err)
@@ -255,7 +280,7 @@ func (p *PostgresDB) setupDatabase() error {
 	ctx := context.Background()
 
 	// Enable extensions - pg_textsearch is required for BM25 indexing
-	_, err := p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pg_textsearch")
+	_, err := p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pg_textsearch"+p.extensionInstallClause())
 	if err != nil {
 		return fmt.Errorf("failed to enable pg_textsearch extension (required for BM25 indexing): %w", err)
 	}
@@ -269,14 +294,14 @@ func (p *PostgresDB) setupDatabase() error {
 		xlog.Info("vectorscale extension already installed", "name", extName)
 	} else {
 		// Try to create vectorscale extension (may be named 'vectorscale' or 'pgvectorscale')
-		_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE")
+		_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vectorscale"+p.extensionInstallClause()+" CASCADE")
 		if err != nil {
 			// Try pgvectorscale as alternative name
-			_, err2 := p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgvectorscale CASCADE")
+			_, err2 := p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgvectorscale"+p.extensionInstallClause()+" CASCADE")
 			if err2 != nil {
 				xlog.Warn("Failed to enable vectorscale/pgvectorscale extension, using pgvector fallback", "error", err, "error2", err2)
 				// Try pgvector as fallback
-				_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+				_, err = p.pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector"+p.extensionInstallClause())
 				if err != nil {
 					return fmt.Errorf("failed to enable vector extension: %w", err)
 				}
@@ -288,9 +313,12 @@ func (p *PostgresDB) setupDatabase() error {
 		}
 	}
 
+	if err := p.resolveExtensionPath(ctx); err != nil {
+		return err
+	}
 	// Create collection_config table
 	_, err = p.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS collection_config (
+		CREATE TABLE IF NOT EXISTS `+p.scope.relation("collection_config")+` (
 			collection_name TEXT PRIMARY KEY,
 			embedding_model TEXT NOT NULL,
 			embedding_dimensions INTEGER NOT NULL,
@@ -323,8 +351,8 @@ func (p *PostgresDB) setupDatabase() error {
 	// Create indexes
 	// GIN index for native search
 	err = p.execNoStatementTimeout(ctx, fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_search ON %s USING GIN(search_vector)
-	`, p.tableName, p.tableName))
+		CREATE INDEX IF NOT EXISTS %s ON %s USING GIN(search_vector)
+	`, p.indexBase("search"), p.tableName))
 	if err != nil {
 		xlog.Warn("Failed to create GIN index", "error", err)
 	}
@@ -332,7 +360,7 @@ func (p *PostgresDB) setupDatabase() error {
 	// BM25 index - required for hybrid search.
 	// The desired text_config is honoured idempotently: if an existing index
 	// uses a different config we drop it so the CREATE below rebuilds it.
-	indexName := fmt.Sprintf("idx_%s_bm25", p.tableName)
+	indexName := p.indexBase("bm25")
 	if err := p.ensureTextSearchConfig(ctx); err != nil {
 		xlog.Warn("Failed to ensure custom text search config", "config", p.bm25TextConfig, "error", err)
 	}
@@ -363,7 +391,7 @@ func (p *PostgresDB) ensureTextSearchConfig(ctx context.Context) error {
 	_, err := p.pool.Exec(ctx, `
 		DO $$
 		BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'de_en') THEN
+			IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_ts_config WHERE cfgname = 'de_en' AND cfgnamespace='public'::regnamespace) THEN
 				CREATE TEXT SEARCH CONFIGURATION public.de_en (COPY = pg_catalog.simple);
 				ALTER TEXT SEARCH CONFIGURATION public.de_en
 					ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part
@@ -384,8 +412,8 @@ func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName string
 		SELECT pg_get_indexdef(c.oid)
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relkind = 'i' AND c.relname = $1
-	`, indexName).Scan(&indexDef)
+		WHERE c.relkind = 'i' AND c.oid = to_regclass($1)
+	`, p.scope.relation(indexName)).Scan(&indexDef)
 	if err == pgx.ErrNoRows {
 		return nil
 	}
@@ -397,7 +425,7 @@ func (p *PostgresDB) ensureBM25IndexConfig(ctx context.Context, indexName string
 	}
 	xlog.Info("BM25 index text_config differs, recreating",
 		"index", indexName, "want", p.bm25TextConfig, "current_def", indexDef)
-	if _, err := p.pool.Exec(ctx, fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)); err != nil {
+	if _, err := p.pool.Exec(ctx, fmt.Sprintf("DROP INDEX IF EXISTS %s", p.scope.relation(indexName))); err != nil {
 		return fmt.Errorf("drop stale BM25 index %s: %w", indexName, err)
 	}
 	return nil
@@ -424,7 +452,7 @@ func bm25IndexHasTextConfig(indexDef, textConfig string) bool {
 // setupDatabase() at startup and from checkAndRecalculateEmbeddings() after a
 // dimension migration that recreated the column.
 func (p *PostgresDB) createVectorIndex(ctx context.Context, vectorscaleInstalled bool) error {
-	indexName := fmt.Sprintf("idx_%s_embedding", p.tableName)
+	indexName := p.indexBase("embedding")
 
 	if vectorscaleInstalled {
 		err := p.execNoStatementTimeout(ctx, pgutil.VectorIndexSQL(p.tableName, indexName, "embedding", true))
@@ -462,14 +490,14 @@ func (p *PostgresDB) checkAndRecalculateEmbeddings() error {
 	var storedDims int
 	err := p.pool.QueryRow(ctx, `
 		SELECT embedding_model, embedding_dimensions
-		FROM collection_config
+		FROM `+p.scope.relation("collection_config")+`
 		WHERE collection_name = $1
 	`, p.collectionName).Scan(&storedModel, &storedDims)
 
 	if err == pgx.ErrNoRows {
 		// New collection, create config entry
 		_, err = p.pool.Exec(ctx, `
-			INSERT INTO collection_config (collection_name, embedding_model, embedding_dimensions)
+			INSERT INTO `+p.scope.relation("collection_config")+` (collection_name, embedding_model, embedding_dimensions)
 			VALUES ($1, $2, $3)
 		`, p.collectionName, p.embeddingsModel, p.embeddingDims)
 		return err
@@ -571,7 +599,7 @@ func (p *PostgresDB) migrateEmbeddingDimensions(ctx context.Context) error {
 
 	// Drop the vector index that depends on the old column. We use the same
 	// name createVectorIndex() will use when recreating it below.
-	_, err = tx.Exec(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS idx_%s_embedding`, p.tableName))
+	_, err = tx.Exec(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS %s`, p.scope.relation(p.indexBase("embedding"))))
 	if err != nil {
 		return fmt.Errorf("failed to drop vector index during migration: %w", err)
 	}
@@ -594,7 +622,7 @@ func (p *PostgresDB) migrateEmbeddingDimensions(ctx context.Context) error {
 	}
 
 	_, err = tx.Exec(ctx, `
-		UPDATE collection_config
+		UPDATE `+p.scope.relation("collection_config")+`
 		SET embedding_model = $1, embedding_dimensions = $2, updated_at = NOW()
 		WHERE collection_name = $3
 	`, p.embeddingsModel, p.embeddingDims, p.collectionName)
@@ -644,7 +672,7 @@ func (p *PostgresDB) Reset() error {
 	}
 
 	// Remove collection config
-	_, err = p.pool.Exec(ctx, "DELETE FROM collection_config WHERE collection_name = $1", p.collectionName)
+	_, err = p.pool.Exec(ctx, "DELETE FROM "+p.scope.relation("collection_config")+" WHERE collection_name = $1", p.collectionName)
 	if err != nil {
 		return fmt.Errorf("failed to delete collection config: %w", err)
 	}
@@ -666,7 +694,7 @@ func (p *PostgresDB) GetEmbeddingDimensions() (int, error) {
 	var dims int
 	err := p.pool.QueryRow(ctx, `
 		SELECT embedding_dimensions 
-		FROM collection_config 
+		FROM `+p.scope.relation("collection_config")+`
 		WHERE collection_name = $1
 	`, p.collectionName).Scan(&dims)
 	if err == nil {
@@ -980,12 +1008,16 @@ const (
 // multi-million-row collections (LocalAI issue #10186). $2/$4 weight each arm
 // (equal by default), so an arm can be biased without breaking the index path.
 func buildHybridSearchQuery(tableName string) string {
+	return buildScopedHybridSearchQuery(tableName, "idx_"+tableName+"_bm25")
+}
+
+func buildScopedHybridSearchQuery(tableName, indexName string) string {
 	candidatePool := fmt.Sprintf("GREATEST($5 * %d, %d)", hybridCandidateMultiplier, hybridCandidateFloor)
 	return fmt.Sprintf(`
 		WITH bm25_results AS (
-			SELECT id, ROW_NUMBER() OVER (ORDER BY full_text <@> to_bm25query($1, 'idx_%[1]s_bm25')) AS rank
+			SELECT id, ROW_NUMBER() OVER (ORDER BY full_text <@> to_bm25query($1, '%[4]s')) AS rank
 			FROM %[1]s
-			ORDER BY full_text <@> to_bm25query($1, 'idx_%[1]s_bm25')
+			ORDER BY full_text <@> to_bm25query($1, '%[4]s')
 			LIMIT %[2]s
 		),
 		vector_results AS (
@@ -1012,7 +1044,7 @@ func buildHybridSearchQuery(tableName string) string {
 		JOIN %[1]s d ON d.id = f.id
 		ORDER BY f.similarity DESC
 		LIMIT $5
-	`, tableName, candidatePool, rrfK)
+	`, tableName, candidatePool, rrfK, strings.ReplaceAll(indexName, "'", "''"))
 }
 
 func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error) {
@@ -1026,7 +1058,7 @@ func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error
 	queryEmbeddingStr := formatVector(queryEmbedding)
 
 	// Build hybrid search query (BM25 + vector similarity)
-	query := buildHybridSearchQuery(p.tableName)
+	query := buildScopedHybridSearchQuery(p.tableName, p.scope.relation(p.indexBase("bm25")))
 
 	rows, err := p.pool.Query(ctx, query, s, p.bm25Weight, queryEmbeddingStr, p.vectorWeight, similarEntries)
 	if err != nil {

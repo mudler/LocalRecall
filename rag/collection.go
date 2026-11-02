@@ -60,8 +60,8 @@ func NewPersistentLocalAICollection(llmClient *openai.Client, apiURL, apiKey, co
 // NewPersistentPostgresCollection creates a new persistent knowledge base collection using the PostgreSQL engine.
 // Returns an error instead of exiting so embedded callers can degrade gracefully when the embedding service
 // or PostgreSQL is transiently unavailable.
-func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int, databaseURL string) (*PersistentKB, error) {
-	postgresDB, err := engine.NewPostgresDBCollection(collectionName, databaseURL, llmClient, embeddingModel)
+func NewPersistentPostgresCollection(llmClient *openai.Client, collectionName, dbPath, filePath, embeddingModel string, maxChunkSize, chunkOverlap int, databaseURL string, scopes ...engine.PostgresScope) (*PersistentKB, error) {
+	postgresDB, err := engine.NewPostgresDBCollection(collectionName, databaseURL, llmClient, embeddingModel, scopes...)
 	if err != nil {
 		return nil, fmt.Errorf("create PostgresDB: %w", err)
 	}

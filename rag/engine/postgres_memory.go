@@ -83,7 +83,7 @@ func (p *PostgresDB) memorySchema(ctx context.Context) error {
 	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(719258039184)"); e != nil {
 		return e
 	}
-	_, e = tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS localrecall_memory_v1 (
+	_, e = tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS `+p.scope.relation("localrecall_memory_v1")+` (
  collection_name text NOT NULL, memory_key text NOT NULL, owner text NOT NULL,
  generation bigint NOT NULL CHECK(generation>0), manifest jsonb,
  PRIMARY KEY(collection_name,memory_key))`)
@@ -94,7 +94,7 @@ func (p *PostgresDB) memorySchema(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	_, e = tx.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX IF NOT EXISTS idx_%s_memory_chunk ON %s(memory_chunk_id)`, p.tableName, p.tableName))
+	_, e = tx.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s(memory_chunk_id)`, p.indexBase("memory_chunk"), p.tableName))
 	if e != nil {
 		return e
 	}
@@ -118,7 +118,7 @@ func (p *PostgresDB) BeginMemoryAttempt(ctx context.Context, key, owner string) 
 	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(719258039184)"); e != nil {
 		return f, e
 	}
-	e = tx.QueryRow(ctx, `INSERT INTO localrecall_memory_v1(collection_name,memory_key,owner,generation) VALUES($1,$2,$3,1)
+	e = tx.QueryRow(ctx, `INSERT INTO `+p.scope.relation("localrecall_memory_v1")+`(collection_name,memory_key,owner,generation) VALUES($1,$2,$3,1)
  ON CONFLICT(collection_name,memory_key) DO UPDATE SET owner=excluded.owner,generation=localrecall_memory_v1.generation+1 RETURNING generation`, p.collectionName, key, owner).Scan(&f.Generation)
 	if e != nil {
 		return f, e
@@ -128,7 +128,7 @@ func (p *PostgresDB) BeginMemoryAttempt(ctx context.Context, key, owner string) 
 func (p *PostgresDB) memoryLocked(ctx context.Context, tx pgx.Tx, key string) (StorageMemoryFence, *postgresMemoryManifest, error) {
 	f := StorageMemoryFence{Key: key}
 	var data []byte
-	e := tx.QueryRow(ctx, `SELECT owner,generation,manifest FROM localrecall_memory_v1 WHERE collection_name=$1 AND memory_key=$2 FOR UPDATE`, p.collectionName, key).Scan(&f.Owner, &f.Generation, &data)
+	e := tx.QueryRow(ctx, `SELECT owner,generation,manifest FROM `+p.scope.relation("localrecall_memory_v1")+` WHERE collection_name=$1 AND memory_key=$2 FOR UPDATE`, p.collectionName, key).Scan(&f.Owner, &f.Generation, &data)
 	if e != nil {
 		return f, nil, e
 	}
@@ -146,7 +146,7 @@ func (p *PostgresDB) saveMemoryManifest(ctx context.Context, tx pgx.Tx, key stri
 	if e != nil {
 		return e
 	}
-	_, e = tx.Exec(ctx, `UPDATE localrecall_memory_v1 SET manifest=$3 WHERE collection_name=$1 AND memory_key=$2`, p.collectionName, key, data)
+	_, e = tx.Exec(ctx, `UPDATE `+p.scope.relation("localrecall_memory_v1")+` SET manifest=$3 WHERE collection_name=$1 AND memory_key=$2`, p.collectionName, key, data)
 	return e
 }
 func (p *PostgresDB) WriteMemory(ctx context.Context, f StorageMemoryFence, w StorageMemoryWrite) (StorageMemoryReceipt, error) {
@@ -198,7 +198,7 @@ func (p *PostgresDB) WriteMemoryWithOptions(ctx context.Context, f StorageMemory
 		if len(m.Chunks) == 0 {
 			return zero, StorageErrMemoryConflict
 		}
-		m.Receipt = StorageMemoryReceipt{EntryID: postgresEntryID(p.collectionName, w.Key), PayloadHash: w.PayloadHash, State: StorageMemoryPreparing}
+		m.Receipt = StorageMemoryReceipt{EntryID: postgresEntryID(p.memoryIdentity(), w.Key), PayloadHash: w.PayloadHash, State: StorageMemoryPreparing}
 		for i := range m.Chunks {
 			m.Receipt.ChunkIDs = append(m.Receipt.ChunkIDs, postgresChunkID(m.Receipt.EntryID, i))
 		}
@@ -279,13 +279,13 @@ func (p *PostgresDB) publishMemory(ctx context.Context, f StorageMemoryFence, m 
 }
 func (p *PostgresDB) validateMemoryManifest(m *postgresMemoryManifest) error {
 	if m.Receipt.State == StorageMemoryDeleted {
-		if !m.Receipt.Deleted || m.Write.Content != "" || len(m.Write.Metadata) != 0 || len(m.Chunks) != 0 || len(m.Receipt.ChunkIDs) != 0 || len(m.Write.PayloadHash) != 64 || m.Receipt.PayloadHash != m.Write.PayloadHash || m.Receipt.EntryID != postgresEntryID(p.collectionName, m.Write.Key) {
+		if !m.Receipt.Deleted || m.Write.Content != "" || len(m.Write.Metadata) != 0 || len(m.Chunks) != 0 || len(m.Receipt.ChunkIDs) != 0 || len(m.Write.PayloadHash) != 64 || m.Receipt.PayloadHash != m.Write.PayloadHash || m.Receipt.EntryID != postgresEntryID(p.memoryIdentity(), m.Write.Key) {
 			return StorageErrMemoryCorrupt
 		}
 		return nil
 	}
 	hash, e := postgresPayloadHash(m.Write.Content, m.Write.Metadata)
-	if e != nil || hash != m.Write.PayloadHash || m.Receipt.PayloadHash != hash || m.Receipt.Deleted || (m.Receipt.State != StorageMemoryPreparing && m.Receipt.State != StorageMemorySaved) || m.MaxSize <= 0 || m.Overlap < 0 || m.Overlap >= m.MaxSize || m.Model != p.embeddingsModel || m.Version != postgresMemoryVersion || m.Receipt.EntryID != postgresEntryID(p.collectionName, m.Write.Key) || len(m.Chunks) == 0 || len(m.Chunks) != len(m.Receipt.ChunkIDs) {
+	if e != nil || hash != m.Write.PayloadHash || m.Receipt.PayloadHash != hash || m.Receipt.Deleted || (m.Receipt.State != StorageMemoryPreparing && m.Receipt.State != StorageMemorySaved) || m.MaxSize <= 0 || m.Overlap < 0 || m.Overlap >= m.MaxSize || m.Model != p.embeddingsModel || m.Version != postgresMemoryVersion || m.Receipt.EntryID != postgresEntryID(p.memoryIdentity(), m.Write.Key) || len(m.Chunks) == 0 || len(m.Chunks) != len(m.Receipt.ChunkIDs) {
 		return StorageErrMemoryCorrupt
 	}
 	expected := chunk.SplitParagraphIntoChunksWithOptions(m.Write.Content, chunk.Options{MaxSize: m.MaxSize, Overlap: m.Overlap, SplitLongWords: true})
@@ -366,7 +366,7 @@ func (p *PostgresDB) MemoryContent(ctx context.Context, key string) (string, err
 	}
 	var m postgresMemoryManifest
 	var data []byte
-	e = p.pool.QueryRow(ctx, `SELECT manifest FROM localrecall_memory_v1 WHERE collection_name=$1 AND memory_key=$2`, p.collectionName, key).Scan(&data)
+	e = p.pool.QueryRow(ctx, `SELECT manifest FROM `+p.scope.relation("localrecall_memory_v1")+` WHERE collection_name=$1 AND memory_key=$2`, p.collectionName, key).Scan(&data)
 	if e != nil {
 		return "", e
 	}
@@ -386,7 +386,7 @@ func (p *PostgresDB) DeleteMemoryEntry(ctx context.Context, id string) (StorageM
 	}
 	defer tx.Rollback(context.Background())
 	var key string
-	e = tx.QueryRow(ctx, `SELECT memory_key FROM localrecall_memory_v1 WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2`, p.collectionName, id).Scan(&key)
+	e = tx.QueryRow(ctx, `SELECT memory_key FROM `+p.scope.relation("localrecall_memory_v1")+` WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2`, p.collectionName, id).Scan(&key)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return zero, StorageErrMemoryNotFound
 	}
@@ -426,7 +426,7 @@ func (p *PostgresDB) MemoryEntries(ctx context.Context) ([]string, error) {
 	if e := p.memorySchema(ctx); e != nil {
 		return nil, e
 	}
-	rows, e := p.pool.Query(ctx, `SELECT manifest->'Receipt'->>'EntryID' FROM localrecall_memory_v1 WHERE collection_name=$1 AND manifest->'Receipt'->>'State'='saved' ORDER BY memory_key`, p.collectionName)
+	rows, e := p.pool.Query(ctx, `SELECT manifest->'Receipt'->>'EntryID' FROM `+p.scope.relation("localrecall_memory_v1")+` WHERE collection_name=$1 AND manifest->'Receipt'->>'State'='saved' ORDER BY memory_key`, p.collectionName)
 	if e != nil {
 		return nil, e
 	}
@@ -455,7 +455,7 @@ func (p *PostgresDB) MemoryEntry(ctx context.Context, entryID string) (string, S
 	}
 	defer tx.Rollback(context.Background())
 	var key string
-	e = tx.QueryRow(ctx, `SELECT memory_key FROM localrecall_memory_v1 WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2`, p.collectionName, entryID).Scan(&key)
+	e = tx.QueryRow(ctx, `SELECT memory_key FROM `+p.scope.relation("localrecall_memory_v1")+` WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2`, p.collectionName, entryID).Scan(&key)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return "", zero, StorageErrMemoryNotFound
 	}
@@ -479,14 +479,14 @@ func (p *PostgresDB) MemoryEntry(ctx context.Context, entryID string) (string, S
 // Query errors fail closed rather than exposing potentially deleted text.
 func (p *PostgresDB) MemorySourceDeleted(ctx context.Context, id string) bool {
 	var present bool
-	if e := p.pool.QueryRow(ctx, `SELECT to_regclass('localrecall_memory_v1') IS NOT NULL`).Scan(&present); e != nil {
+	if e := p.pool.QueryRow(ctx, `SELECT to_regclass('`+p.scope.relation("localrecall_memory_v1")+`') IS NOT NULL`).Scan(&present); e != nil {
 		return true
 	}
 	if !present {
 		return false
 	}
 	var deleted bool
-	e := p.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM localrecall_memory_v1 WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2 AND manifest->'Receipt'->>'State'='deleted')`, p.collectionName, id).Scan(&deleted)
+	e := p.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+p.scope.relation("localrecall_memory_v1")+` WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2 AND manifest->'Receipt'->>'State'='deleted')`, p.collectionName, id).Scan(&deleted)
 	return e != nil || deleted
 }
 func (p *PostgresDB) WithMemoryMaintenance(ctx context.Context, fn func() error) error {
@@ -502,7 +502,7 @@ func (p *PostgresDB) WithMemoryMaintenance(ctx context.Context, fn func() error)
 		return e
 	}
 	var exists bool
-	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM localrecall_memory_v1 WHERE collection_name=$1)`, p.collectionName).Scan(&exists); e != nil {
+	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+p.scope.relation("localrecall_memory_v1")+` WHERE collection_name=$1)`, p.collectionName).Scan(&exists); e != nil {
 		return e
 	}
 	if exists {

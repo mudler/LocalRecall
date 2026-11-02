@@ -385,3 +385,36 @@ We welcome contributions! Please feel free to:
 
 - ✅ Open an issue for suggestions or bugs.
 - ✅ Submit a pull request with enhancements.
+
+### Embedded PostgreSQL namespace isolation
+
+Embedded multi-tenant callers can pass an explicit `engine.PostgresScope` to
+`rag.NewPersistentPostgresCollection`, `engine.NewPostgresDBCollection`,
+`engine.ListPostgresCollections`, and `engine.PostgresCollectionExists`.
+Use `engine.NewPostgresScope(identity)` with a stable, unambiguous identity that
+includes both the deployment and principal (including a distinct root identity).
+It derives a 58-byte schema identifier using all 256 SHA-256 bits. Never derive
+this identity from a transient frontend name or a local filesystem path.
+
+Scoped backends qualify document, registry, journal and destructive operations;
+registry discovery does not fall through to legacy tables on the connection's
+search path. Scope creation records the full identity atomically. An existing
+schema with absent or different identity metadata is rejected with
+`engine.ErrPostgresScope`; it is never adopted. Scoped collection and index
+identifiers also use bounded digests, avoiding punctuation/truncation aliases.
+Memory document identities include the scope identity.
+
+Omitting the optional scope (or passing its zero value) preserves the legacy API
+and on-disk/database identities. Scoped mode never migrates, copies, or opens
+legacy collections automatically. Applications upgrading existing deployments
+must provide their own explicit legacy-data admission and operator-resolution
+policy; this primitive does not determine who owns legacy data.
+
+The database role needs schema/extension creation privileges during initial
+provisioning. Scoped connections ignore arbitrary DSN search paths for extension
+resolution, using PostgreSQL's catalog and the installed extension schemas.
+Those schemas, particularly `public`, must be administered as trusted extension
+locations, not be writable by untrusted tenants. This is application-level data
+isolation, not a sandbox against arbitrary SQL executed with the same database
+role. Missing extensions are provisioned in `public`; existing installations are
+resolved from PostgreSQL's extension catalog.
