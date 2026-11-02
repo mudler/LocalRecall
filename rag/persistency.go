@@ -3,6 +3,7 @@ package rag
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -266,7 +267,13 @@ func (db *PersistentKB) Repopulate() error {
 func (db *PersistentKB) ListDocuments() []string {
 	db.Lock()
 	defer db.Unlock()
-	return db.listDocumentKeys()
+	keys := db.listDocumentKeys()
+	if p, ok := db.Engine.(*engine.PostgresDB); ok {
+		if ids, e := p.MemoryEntries(context.Background()); e == nil {
+			keys = append(keys, ids...)
+		}
+	}
+	return keys
 }
 
 // EntryExists checks if an entry with the given name exists.
@@ -275,6 +282,11 @@ func (db *PersistentKB) EntryExists(entry string) bool {
 	db.Lock()
 	defer db.Unlock()
 
+	if p, ok := db.Engine.(*engine.PostgresDB); ok {
+		if _, _, e := p.MemoryEntry(context.Background(), entry); e == nil {
+			return true
+		}
+	}
 	_, ok := db.findEntryKey(entry)
 	return ok
 }
@@ -285,6 +297,15 @@ func (db *PersistentKB) GetEntryContent(entry string) ([]types.Result, error) {
 	db.Lock()
 	defer db.Unlock()
 
+	if p, ok := db.Engine.(*engine.PostgresDB); ok {
+		_, r, e := p.MemoryEntry(context.Background(), entry)
+		if e == nil {
+			return db.Engine.GetBySource(r.EntryID)
+		}
+		if !errors.Is(e, engine.StorageErrMemoryNotFound) {
+			return nil, e
+		}
+	}
 	key, ok := db.findEntryKey(entry)
 	if !ok {
 		return nil, fmt.Errorf("entry not found: %s", entry)
@@ -319,6 +340,15 @@ func (db *PersistentKB) GetEntryFileContent(entry string) (content string, chunk
 	db.Lock()
 	defer db.Unlock()
 
+	if p, ok := db.Engine.(*engine.PostgresDB); ok {
+		text, r, e := p.MemoryEntry(context.Background(), entry)
+		if e == nil {
+			return text, len(r.ChunkIDs), nil
+		}
+		if !errors.Is(e, engine.StorageErrMemoryNotFound) {
+			return "", 0, e
+		}
+	}
 	key, ok := db.findEntryKey(entry)
 	if !ok {
 		return "", 0, fmt.Errorf("entry not found: %s", entry)

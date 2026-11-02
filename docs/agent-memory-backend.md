@@ -183,3 +183,67 @@ not simulate loss of operating-system caches or storage write reordering.
 Legacy uploads retain their existing durability semantics, not this journal
 protocol. Memory deletion, tombstone recovery, and full public acceptance remain
 separate work.
+
+## PostgreSQL ingestion implementation status
+
+The internal PostgreSQL Begin/Write/Reconcile protocol is implemented. Public
+`PersistentKB` memory mutation methods and capability flags remain disabled
+until exact deletion and the complete contract acceptance gate are implemented.
+This work does not implement tombstones or change the raw-vector API.
+
+A shared `localrecall_memory_v1` row reserves each collection/key with an owner
+and monotonically increasing generation. A row lock serializes reservations and
+publication. Write commits its immutable preparing manifest before requesting
+embeddings, then reacquires the row lock and checks the current fence before
+inserting chunks. Chunk inserts and the saved receipt commit atomically. Two
+writers using the same fence converge on the saved receipt rather than inserting
+duplicate chunks; a newer reservation fences an older writer paused in embedding.
+Reconcile repairs only preparing manifests and validates saved chunks. Invalid
+manifest hashes, identities, chunk settings, model, or chunk content/metadata
+fail as corruption rather than being silently reconstructed.
+
+The schema addition retains legacy SERIAL physical IDs and adds a nullable,
+uniquely indexed logical memory chunk ID. Lookup, source queries, and search
+return deterministic logical IDs for memory passages while legacy results retain
+their existing IDs. Memory chunks explicitly carry their parent entry ID.
+Schema initialization uses PostgreSQL advisory locks to serialize concurrent
+catalog changes across pools and processes.
+
+Parent text and receipts are authoritative in PostgreSQL, not local files.
+`ListDocuments`, `EntryExists`, `GetEntryContent`, and `GetEntryFileContent`
+recognize saved database-backed parents on another replica with empty local
+assets. Parent lookup is exact; `memory.txt` is not a parent identity.
+`GetEntryFilePath` does not fabricate a local file for a database-backed parent.
+The legacy list/bool APIs cannot expose database errors; callers needing typed
+errors should use the engine's exact `MemoryEntry` read. Do not race legacy
+Delete/Reset/repopulation or direct SQL mutation against memory operations.
+
+### Real PostgreSQL verification
+
+Run from the repository root against an explicitly disposable, extension-enabled
+fixture with PG17 on port 5433, data at `/tmp/memory17` inside the container, and
+`vector` plus `pg_textsearch` installed. Preload `pg_textsearch` before server
+startup. The fixture runner does not provision, alter, or remove the database;
+it leaves the supplied fixture alive for independent verification. It derives
+the container IP using Docker inspection and refuses a URL not matching it.
+The default container name is `localrecall-memory-task3`; another disposable
+`localrecall-memory-*` name can be supplied as `MEMORY_DATABASE_CONTAINER`.
+
+```sh
+ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' localrecall-memory-task3)
+MEMORY_DATABASE_URL="postgres://postgres@$ip:5433/postgres?sslmode=disable" \
+  sh test/memory/database.sh go test -p 2 -race -count=1 \
+  ./rag ./rag/engine -run '^TestMemoryPostgres'
+```
+
+The runner requires the fixture and extensions, preserves command failures,
+and rejects skipped or zero executed memory tests. Deterministic local embedding
+servers require no model download. Coverage includes replay/conflict, independent
+pools racing first reservation and schema initialization, stale fences during
+embedding, same-fence concurrent publication, real trigger failures after chunk
+inserts, backend connection termination during COMMIT, lost successful receipts,
+legacy-table coexistence, invalid preparing manifests, and another replica
+reading parent content without local assets. Connection termination proves the
+aborted-commit recovery path; dropping a successful receipt separately proves
+recovery of an already committed publication. These tests are not a claim of
+power-loss durability or exhaustive network-fault simulation.

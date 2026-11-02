@@ -118,6 +118,16 @@ func NewPostgresDBCollection(collectionName, databaseURL string, openaiClient *o
 		bm25TextConfig:  bm25TextConfig,
 	}
 
+	// Serialize additive catalog initialization across independent pools/processes.
+	schemaConn, err := pgx.Connect(context.Background(), databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	defer schemaConn.Close(context.Background())
+	if _, err = schemaConn.Exec(context.Background(), "SELECT pg_advisory_lock(719258039183)"); err != nil {
+		return nil, err
+	}
+	defer schemaConn.Exec(context.Background(), "SELECT pg_advisory_unlock(719258039183)")
 	// Setup database (extensions, tables, indexes)
 	if err := pg.setupDatabase(); err != nil {
 		return nil, fmt.Errorf("failed to setup database: %w", err)
@@ -856,7 +866,7 @@ func (p *PostgresDB) GetByID(id string) (types.Result, error) {
 
 	err := p.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT id, title, content, metadata, embedding::text
-		FROM %s WHERE id = $1
+		FROM %s WHERE id::text = $1 OR metadata->>'memory_chunk_id' = $1
 	`, p.tableName), id).Scan(
 		&result.ID, &title, &result.Content, &metadataJSON, &embeddingStr)
 	if err != nil {
@@ -874,6 +884,9 @@ func (p *PostgresDB) GetByID(id string) (types.Result, error) {
 		result.Metadata["title"] = *title
 	}
 
+	if logical := result.Metadata["memory_chunk_id"]; logical != "" {
+		result.ID = logical
+	}
 	return result, nil
 }
 
@@ -905,6 +918,9 @@ func (p *PostgresDB) GetBySource(source string) ([]types.Result, error) {
 		}
 		if title != "" {
 			r.Metadata["title"] = title
+		}
+		if logical := r.Metadata["memory_chunk_id"]; logical != "" {
+			r.ID = logical
 		}
 		results = append(results, r)
 	}
@@ -1057,6 +1073,9 @@ func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error
 			r.Metadata["title"] = title
 		}
 
+		if logical := r.Metadata["memory_chunk_id"]; logical != "" {
+			r.ID = logical
+		}
 		results = append(results, r)
 	}
 
