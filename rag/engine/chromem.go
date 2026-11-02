@@ -9,6 +9,7 @@ import (
 	"github.com/mudler/localrecall/rag/types"
 	"github.com/philippgille/chromem-go"
 	"github.com/sashabaranov/go-openai"
+	"golang.org/x/sync/errgroup"
 )
 
 type ChromemDB struct {
@@ -125,13 +126,13 @@ func (c *ChromemDB) Store(s string, metadata map[string]string) (Result, error) 
 		return Result{}, fmt.Errorf("empty string")
 	}
 
-	if err := c.collection.AddDocuments(context.Background(), []chromem.Document{
+	if err := c.addDocuments(context.Background(), []chromem.Document{
 		{
 			Metadata: metadata,
 			Content:  s,
 			ID:       fmt.Sprint(c.index),
 		},
-	}, runtime.NumCPU()); err != nil {
+	}); err != nil {
 		return Result{}, err
 	}
 
@@ -164,11 +165,55 @@ func (c *ChromemDB) StoreDocuments(s []string, metadata map[string]string) ([]Re
 		}
 	}
 
-	if err := c.collection.AddDocuments(context.Background(), documents, runtime.NumCPU()); err != nil {
+	if err := c.addDocuments(context.Background(), documents); err != nil {
 		return nil, err
 	}
 
 	return results, nil
+}
+
+// addDocuments retains chromem's concurrent, cancellable, partially successful
+// batch writes, but supplies each embedding from this handle. The collection's
+// callback belongs to its first opener and must never be swapped between handles.
+func (c *ChromemDB) addDocuments(ctx context.Context, documents []chromem.Document) error {
+	group, ctx := errgroup.WithContext(ctx)
+	group.SetLimit(runtime.NumCPU())
+	embed := c.embedding()
+	for _, doc := range documents {
+		group.Go(func() error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// Preserve chromem's validation without requesting an empty document.
+			if doc.Content != "" {
+				embedding, err := embed(ctx, doc.Content)
+				if err != nil {
+					return fmt.Errorf("couldn't add document '%s': couldn't create embedding of document: %w", doc.ID, err)
+				}
+				if len(embedding) == 0 {
+					return fmt.Errorf("couldn't add document '%s': embedding is empty", doc.ID)
+				}
+				doc.Embedding = embedding
+			}
+			if err := c.collection.AddDocument(ctx, doc); err != nil {
+				return fmt.Errorf("couldn't add document '%s': %w", doc.ID, err)
+			}
+			return nil
+		})
+	}
+	return group.Wait()
+}
+
+// query uses the current handle without changing the shared collection callback.
+func (c *ChromemDB) query(ctx context.Context, text string, limit int, where map[string]string) ([]chromem.Result, error) {
+	if text == "" {
+		return nil, fmt.Errorf("queryText is empty")
+	}
+	embedding, err := c.embedding()(ctx, text)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't create embedding of query: %w", err)
+	}
+	return c.collection.QueryEmbedding(ctx, embedding, limit, where, nil)
 }
 
 func (c *ChromemDB) Delete(where map[string]string, whereDocuments map[string]string, ids ...string) error {
@@ -200,7 +245,7 @@ func (c *ChromemDB) GetBySource(source string) ([]types.Result, error) {
 	// Use Query with a where filter to find documents by source metadata.
 	// We use a dummy query and request all documents, relying on the where
 	// filter to narrow results.
-	res, err := c.collection.Query(ctx, ".", count, map[string]string{"source": source}, nil)
+	res, err := c.query(ctx, ".", count, map[string]string{"source": source})
 	if err != nil {
 		return nil, fmt.Errorf("error querying by source: %v", err)
 	}
@@ -228,7 +273,7 @@ func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error)
 		}
 		similarEntries = n
 	}
-	res, err := c.collection.Query(context.Background(), s, similarEntries, nil, nil)
+	res, err := c.query(context.Background(), s, similarEntries, nil)
 	if err != nil {
 		return nil, err
 	}
