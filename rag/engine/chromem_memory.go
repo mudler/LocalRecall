@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/philippgille/chromem-go"
@@ -29,24 +30,101 @@ func lockChromem(path string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+// One root owns exactly one loaded database and one OS lock. The registry
+// mutex covers first load and last release, so no opener can observe a stale
+// image or acquire the OS lock before the previous owner's last transaction.
+type chromemRoot struct {
+	path          string
+	db            *chromem.DB
+	lifetime      *os.File
+	refs          int
+	transactionMu sync.Mutex
+	collectionsMu sync.Mutex
+	collections   map[string]*chromemCollectionState
+}
+type chromemCollectionState struct {
+	legacyMu   sync.Mutex
+	collection *chromem.Collection
+	index      int
+}
+
+var chromemRoots = struct {
+	sync.Mutex
+	roots map[string]*chromemRoot
+}{roots: make(map[string]*chromemRoot)}
+
+func acquireChromemRoot(path string) (*chromemRoot, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if err = os.MkdirAll(path, 0700); err != nil {
+		return nil, err
+	}
+	// Coalesce relative paths and symlink aliases before consulting the cache.
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	chromemRoots.Lock()
+	defer chromemRoots.Unlock()
+	if root := chromemRoots.roots[path]; root != nil {
+		root.refs++
+		return root, nil
+	}
+	lock, err := lockChromem(path)
+	if err != nil {
+		return nil, err
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = lock.Close()
+		}
+	}()
+	if err = repairChromemPending(path); err != nil {
+		return nil, err
+	}
+	db, err := chromem.NewPersistentDB(path, true)
+	if err != nil {
+		return nil, err
+	}
+	root := &chromemRoot{path: path, db: db, lifetime: lock, refs: 1, collections: make(map[string]*chromemCollectionState)}
+	chromemRoots.roots[path] = root
+	success = true
+	return root, nil
+}
+func releaseChromemRoot(root *chromemRoot) {
+	chromemRoots.Lock()
+	defer chromemRoots.Unlock()
+	root.refs--
+	if root.refs == 0 {
+		delete(chromemRoots.roots, root.path)
+		_ = root.lifetime.Close()
+	}
+}
 func (c *ChromemDB) Close() {
 	c.memoryMu.Lock()
 	defer c.memoryMu.Unlock()
 	if !c.closed {
 		c.closed = true
-		if c.lifetime != nil {
-			_ = c.lifetime.Close()
+		if c.owner != nil {
+			releaseChromemRoot(c.owner)
 		}
 	}
 }
 
-// WithMemoryOwnership serializes the complete journal transaction with Close.
+// WithMemoryOwnership serializes the complete journal transaction across all
+// handles sharing a root. Close waits for this handle's active transaction.
 func (c *ChromemDB) WithMemoryOwnership(fn func() error) error {
 	c.memoryMu.Lock()
 	defer c.memoryMu.Unlock()
-	if c.closed || c.lifetime == nil {
+	if c.closed || c.owner == nil {
 		return fmt.Errorf("chromem owner closed or uninitialized")
 	}
+	c.owner.transactionMu.Lock()
+	defer c.owner.transactionMu.Unlock()
 	return fn()
 }
 func (c *ChromemDB) MemoryIdentity() (string, string) { return c.collectionName, c.embeddingsModel }

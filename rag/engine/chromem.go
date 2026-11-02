@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
 
@@ -13,58 +12,46 @@ import (
 )
 
 type ChromemDB struct {
-	lifetime        *os.File
+	owner *chromemRoot
+	*chromemCollectionState
 	root            string
 	memoryMu        sync.Mutex
 	closed          bool
 	collectionName  string
-	collection      *chromem.Collection
-	index           int
 	client          *openai.Client
 	db              *chromem.DB
 	embeddingsModel string
 }
 
 func NewChromemDBCollection(collection, path string, openaiClient *openai.Client, embeddingsModel string) (*ChromemDB, error) {
-	lock, err := lockChromem(path)
+	owner, err := acquireChromemRoot(path)
 	if err != nil {
 		return nil, err
 	}
 	success := false
 	defer func() {
 		if !success {
-			_ = lock.Close()
+			releaseChromemRoot(owner)
 		}
 	}()
-	if err := repairChromemPending(path); err != nil {
-		return nil, err
-	}
-	db, err := chromem.NewPersistentDB(path, true)
-	if err != nil {
-		return nil, err
-	}
-
 	chromem := &ChromemDB{
-		collectionName:  collection,
-		lifetime:        lock,
-		root:            path,
-		index:           1,
-		db:              db,
-		client:          openaiClient,
-		embeddingsModel: embeddingsModel,
+		collectionName: collection, owner: owner, root: owner.path,
+		db: owner.db, client: openaiClient, embeddingsModel: embeddingsModel,
 	}
-
-	c, err := db.GetOrCreateCollection(collection, nil, chromem.embedding())
-	if err != nil {
-		return nil, err
+	// Collection initialization and legacy ID allocation state belong to the
+	// shared database, not to an individual collection handle.
+	owner.collectionsMu.Lock()
+	defer owner.collectionsMu.Unlock()
+	state := owner.collections[collection]
+	if state == nil {
+		c, err := owner.db.GetOrCreateCollection(collection, nil, chromem.embedding())
+		if err != nil {
+			return nil, err
+		}
+		state = &chromemCollectionState{collection: c, index: c.Count() + 1}
+		owner.collections[collection] = state
 	}
-	chromem.collection = c
-
-	count := c.Count()
-	if count > 0 {
-		chromem.index = count + 1
-	}
-
+	chromem.chromemCollectionState = state
 	success = true
 	return chromem, nil
 }
@@ -74,6 +61,8 @@ func (c *ChromemDB) Count() int {
 }
 
 func (c *ChromemDB) Reset() error {
+	c.legacyMu.Lock()
+	defer c.legacyMu.Unlock()
 	if err := c.db.DeleteCollection(c.collectionName); err != nil {
 		return fmt.Errorf("error deleting collection: %v", err)
 	}
@@ -127,6 +116,8 @@ func (c *ChromemDB) embedding() chromem.EmbeddingFunc {
 }
 
 func (c *ChromemDB) Store(s string, metadata map[string]string) (Result, error) {
+	c.legacyMu.Lock()
+	defer c.legacyMu.Unlock()
 	defer func() {
 		c.index++
 	}()
@@ -150,6 +141,8 @@ func (c *ChromemDB) Store(s string, metadata map[string]string) (Result, error) 
 }
 
 func (c *ChromemDB) StoreDocuments(s []string, metadata map[string]string) ([]Result, error) {
+	c.legacyMu.Lock()
+	defer c.legacyMu.Unlock()
 	defer func() {
 		c.index += len(s)
 	}()

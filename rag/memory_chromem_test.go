@@ -313,3 +313,53 @@ func TestMemoryChromemLegacyCoexistence(t *testing.T) {
 		t.Fatal(doc, e)
 	}
 }
+
+// Exercise the actual application factory used by startup routes and runtime
+// collection discovery, not a test-only root layout or an alternate DB loader.
+func TestMemoryChromemApplicationCollections(t *testing.T) {
+	root := t.TempDir()
+	vectors, assets := filepath.Join(root, "vectors"), filepath.Join(root, "assets")
+	open := func(name string) *PersistentKB {
+		t.Helper()
+		kb, err := NewPersistentChromeCollection(nil, name, vectors, assets, "fake", 12, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(kb.Close)
+		return kb
+	}
+	// Seed the startup discovery list, then reopen its collections as routes do.
+	open("first").Close()
+	open("second").Close()
+	var startup []*PersistentKB
+	for _, name := range ListAllCollections(vectors) {
+		startup = append(startup, open(name))
+	}
+	if len(startup) != 2 {
+		t.Fatalf("startup collections: %d", len(startup))
+	}
+	runtime := open("runtime")
+	startup[0].Close()
+	// Use the subprocess fixture's expected vector layout. Even after one handle
+	// closes, a different process must not load this root's live DB image.
+	if out, err := memoryChromemChild(root, "reject").CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v", out, err)
+	}
+	if _, err := runtime.beginChromemMemory(context.Background(), "key", "live"); err != nil {
+		t.Fatal(err)
+	}
+	// Failure after engine acquisition must release only the failed handle's ref.
+	if err := os.WriteFile(filepath.Join(vectors, "collection-broken.json"), []byte("invalid json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if kb, err := NewPersistentChromeCollection(nil, "broken", vectors, assets, "fake", 12, 0); err == nil {
+		kb.Close()
+		t.Fatal("expected constructor failure")
+	}
+	if out, err := memoryChromemChild(root, "reject").CombinedOutput(); err != nil {
+		t.Fatalf("after constructor failure: %s: %v", out, err)
+	}
+	startup[1].Close()
+	runtime.Close()
+	open("first").Close()
+}

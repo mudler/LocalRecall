@@ -130,10 +130,19 @@ memory tombstones are not implemented by this chromem work.
 
 Chromem takes a nonblocking exclusive OS advisory file lock on
 `<vector-root>/.owner.lock` before loading or repairing its database. The lock is
-held until Close (or process exit); another constructor using the same root is
-rejected, including for a different collection in that root. Constructor failures
-release ownership. Internal memory transactions and Close share an in-process
-mutex, so Close waits for an active memory transaction. This is single-owner,
+held until the last collection handle closes (or process exit). Within one
+process, constructors sharing a canonical root (including relative and symlink
+aliases) share one loaded chromem database and its OS lock. Startup collection
+discovery and runtime collection opens can therefore coexist without loading
+stale database images. Concurrent constructors are serialized through initial
+repair/load, and duplicate collection handles share collection and legacy ID
+allocation state. Another process is rejected while any handle remains open.
+Close is idempotent and releases only that handle; the last Close evicts the
+cached database and unlocks the root, so a subsequent open reloads disk.
+Constructor failures release their reference without invalidating other handles.
+Internal memory transactions serialize across every handle sharing the root;
+Close waits for that handle's active memory transaction and a closed handle
+cannot begin another. This is single-owner,
 local-filesystem operation, not distributed fencing. The advisory lock requires
 cooperating processes: do not replace/unlink its file, bypass this constructor,
 or use shared/network filesystems. Legacy mutation methods do not participate

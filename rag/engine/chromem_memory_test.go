@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/philippgille/chromem-go"
 )
@@ -135,5 +137,140 @@ func TestMemoryChromemPendingImageRejectsCorruption(t *testing.T) {
 			}
 			reopened.Close()
 		})
+	}
+}
+
+// One application opens all discovered collections against the same vector root.
+// Later runtime discovery and concurrent opens must use that very same DB image.
+func TestMemoryChromemSharedRoot(t *testing.T) {
+	root := t.TempDir()
+	first, err := NewChromemDBCollection("startup-a", root, nil, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := NewChromemDBCollection("startup-b", root, nil, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if first.db != second.db {
+		t.Fatal("separate database images")
+	}
+	const n = 8
+	handles := make(chan *ChromemDB, n)
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			db, e := NewChromemDBCollection(fmt.Sprintf("runtime-%d", i), root, nil, "fake")
+			handles <- db
+			errs <- e
+		}(i)
+	}
+	wg.Wait()
+	close(handles)
+	close(errs)
+	for e := range errs {
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	for db := range handles {
+		if db.db != first.db {
+			t.Fatal("concurrent open loaded stale image")
+		}
+		db.Close()
+		db.Close()
+	}
+	alias, err := NewChromemDBCollection("startup-b", filepath.Join(root, "."), nil, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer alias.Close()
+	if alias.collection != second.collection {
+		t.Fatal("duplicate collection image")
+	}
+	first.Close()
+	if err = second.WithMemoryOwnership(func() error {
+		return second.collection.AddDocument(context.Background(), chromem.Document{ID: "test", Content: "still live", Embedding: []float32{1, 0, 0}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = alias.GetByID("test"); err != nil {
+		t.Fatal(err)
+	}
+	if err = first.WithMemoryOwnership(func() error { return nil }); err == nil {
+		t.Fatal("closed handle accepted transaction")
+	}
+	second.Close()
+	alias.Close()
+	reopened, err := NewChromemDBCollection("startup-b", root, nil, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.db == first.db {
+		t.Fatal("last close retained stale DB")
+	}
+	if _, err = reopened.GetByID("test"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMemoryChromemSharedRootTransactions(t *testing.T) {
+	root := t.TempDir()
+	link := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	a, err := NewChromemDBCollection("same", root, nil, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := NewChromemDBCollection("same", link, nil, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if a.owner != b.owner {
+		t.Fatal("symlink alias acquired different owner")
+	}
+	var wg sync.WaitGroup
+	// This deliberately unsynchronized variable is protected by the root-level
+	// transaction mutex, not either individual handle's mutex. Race detection
+	// verifies that both handles participate in that serialization boundary.
+	counter := 0
+	for _, db := range []*ChromemDB{a, b} {
+		wg.Add(1)
+		go func(db *ChromemDB) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				if e := db.WithMemoryOwnership(func() error { counter++; return nil }); e != nil {
+					t.Error(e)
+				}
+			}
+		}(db)
+	}
+	wg.Wait()
+	if counter != 200 {
+		t.Fatalf("lost transactions: %d", counter)
+	}
+	entered, finish, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() { _ = a.WithMemoryOwnership(func() error { close(entered); <-finish; return nil }) }()
+	<-entered
+	go func() { a.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close did not wait for active transaction")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(finish)
+	<-closed
+	if err = b.WithMemoryOwnership(func() error { return nil }); err != nil {
+		t.Fatal(err)
 	}
 }
