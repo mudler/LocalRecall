@@ -12,3 +12,12 @@ type Result struct {
 	// The value is in the range [-1, 1].
 	Similarity float32
 }
+
+// ParentEntryID returns exact parent identity separately from the passage ID.
+// A method rather than a new field preserves legacy unkeyed literals and JSON.
+func (r Result) ParentEntryID() string {
+	if id := r.Metadata["memory_entry_id"]; id != "" {
+		return id
+	}
+	return r.Metadata["source"]
+}
