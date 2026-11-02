@@ -77,9 +77,29 @@ func (e *StorageMemoryError) Unwrap() error { return e.Kind }
 func (*LocalAIRAGDB) MemoryCapabilities(context.Context) (StorageMemoryCapabilities, error) {
 	return StorageMemoryCapabilities{Reason: "localai has no durable memory identity or receipt protocol"}, nil
 }
-func (*ChromemDB) MemoryCapabilities(context.Context) (StorageMemoryCapabilities, error) {
-	return StorageMemoryCapabilities{Reason: "chromem durable memory protocol is not enabled"}, nil
+
+// Chromem's journal lives in PersistentKB; this reports the owned storage seam.
+func (c *ChromemDB) MemoryCapabilities(ctx context.Context) (StorageMemoryCapabilities, error) {
+	if c == nil {
+		return StorageMemoryCapabilities{Reason: "uninitialized chromem"}, nil
+	}
+	c.memoryMu.Lock()
+	defer c.memoryMu.Unlock()
+	if c.owner == nil {
+		return StorageMemoryCapabilities{Reason: "uninitialized chromem"}, nil
+	}
+	caps := StorageMemoryCapabilities{Supported: true, DurableReceipts: true, ExactDelete: true, Ready: !c.closed, Reason: "standalone lifetime-owned local filesystem only"}
+	return caps, ctx.Err()
 }
-func (*PostgresDB) MemoryCapabilities(context.Context) (StorageMemoryCapabilities, error) {
-	return StorageMemoryCapabilities{Reason: "postgres durable memory protocol is not enabled"}, nil
+func (p *PostgresDB) MemoryCapabilities(ctx context.Context) (StorageMemoryCapabilities, error) {
+	if p == nil || p.pool == nil {
+		return StorageMemoryCapabilities{Reason: "uninitialized postgres"}, nil
+	}
+	caps := StorageMemoryCapabilities{Supported: true, DurableReceipts: true, ExactDelete: true, DistributedFencing: true}
+	if err := p.pool.Ping(ctx); err != nil {
+		caps.Reason = "postgres unavailable"
+		return caps, err
+	}
+	caps.Ready = true
+	return caps, nil
 }

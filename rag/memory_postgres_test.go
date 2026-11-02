@@ -93,7 +93,7 @@ func TestMemoryPostgresReplicaWithoutAssets(t *testing.T) {
 		t.Fatal("basename accepted")
 	}
 	caps, e := kb.MemoryCapabilities(ctx)
-	if e != nil || caps.Supported {
-		t.Fatal("public capability enabled before deletion gate", caps, e)
+	if e != nil || !caps.Supported || !caps.Ready {
+		t.Fatal("public capability unavailable", caps, e)
 	}
 }

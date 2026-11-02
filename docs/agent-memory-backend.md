@@ -6,24 +6,33 @@ APIs retain their existing contracts. This API does not add HTTP endpoints.
 
 ## Availability
 
-**All engines currently report unsupported.** This release freezes types,
-identity encoding, validation, and fail-closed behavior, not durable ingestion.
-Unknown engines and LocalAI cannot fall back to UUID-based upload. Begin, write,
-reconcile, and delete return typed unsupported errors without legacy engine
-calls, embeddings, or filesystem writes.
+The public API is enabled for the accepted concrete chromem and PostgreSQL
+adapters. It is separate from legacy Upload and the raw-vector namespace.
+
+| Engine | Memory API | Durable receipts / exact delete | Distributed fencing | Runtime readiness |
+| --- | --- | --- | --- | --- |
+| Chromem | Supported through `PersistentKB` | Yes | **No** | Open, lifetime-owned local store |
+| PostgreSQL | Supported through `PersistentKB` | Yes | Yes | Initialized pool and successful context-bound ping |
+| LocalAI RAG engine | Unsupported | No | No | Not applicable |
+| Unknown/custom or uninitialized engine | Unsupported | No | No | Not applicable |
 
 `MemoryCapabilities` separates protocol `Supported` from runtime `Ready`, with
 `DurableReceipts`, `ExactDelete`, `DistributedFencing`, and a diagnostic `Reason`.
-Connectivity or a legacy Delete method is not evidence of memory support. All
-flags remain false until complete engine durability suites pass.
+A connectivity error does not remove PostgreSQL protocol support: it returns an
+error with readiness false. Recheck readiness when using an open backend; a
+capability response is not a lease or a guarantee that the next operation succeeds.
+Chromem support requires a single owner on a cooperating local filesystem, with
+an exclusive OS lock held for the entire open lifetime. Shared/network filesystems
+and distributed consumers must not use chromem. Distributed consumers require
+PostgreSQL and shared database serialization.
 
-Future chromem support is limited to a single owner on a local filesystem,
-with an exclusive OS lock held for the entire open lifetime. Per-operation
-locking of stale in-memory stores does not establish ownership. Shared/network
-filesystems and distributed consumers must not use that mode. PostgreSQL is the
-intended distributed backend, requiring shared durable receipts and database
-serialization. LocalAI remains unsupported until its store API provides the
-necessary identity and receipt guarantees.
+Unknown engines and the LocalAI RAG engine cannot fall back to UUID-based Upload.
+Begin, write, reconcile, and delete return typed unsupported errors before input
+validation, legacy engine calls, embeddings, or filesystem writes. Custom engines
+remain source-compatible with `rag.Engine`; merely adding a similarly named
+capability method does not opt an unknown engine into this accepted protocol.
+LocalAI applications can use the supported in-process backends; selecting the
+LocalAI RAG storage engine itself remains unsupported.
 
 ## Go API
 
@@ -89,10 +98,9 @@ defaults. This identity helper does not itself persist a manifest.
 for legacy results. It never invents a parent from content. Using a method keeps
 the legacy struct layout and JSON unchanged.
 
-## Durable protocol requirements
+## Durable protocol and consumer handoff
 
-These are requirements for future supported implementations, not guarantees
-provided by the currently unsupported adapters:
+The supported adapters implement the following protocol within the limits below:
 
 - Same key and same payload return the same receipt. A different payload
   conflicts, including after deletion. Tombstones retain identity/hash but not
@@ -116,17 +124,42 @@ provided by the currently unsupported adapters:
 `MemoryError` supports `errors.As`; `errors.Is` classifies
 `ErrMemoryUnsupported`, `ErrMemoryConflict`, `ErrMemoryNotFound`,
 `ErrMemoryStaleFence`, and `ErrMemoryCorrupt`. Not-found means no exact entry;
-repeated completed deletion should return the retained deleted receipt rather
+repeated completed memory deletion returns the retained deleted receipt rather
 than treating its tombstone as absent. Unsupported takes precedence on disabled
 backends, even for invalid input. Never silently retry through legacy Upload.
 
+### Queue claim and backend fence handoff
+
+First verify the queue claim is still owned by the caller, then call
+`BeginMemoryAttempt(ctx, key, owner)` and retain the returned fence. Only after
+that reservation succeeds may a takeover be treated as active. Pass that exact
+key/owner/generation to `WriteMemory`; do not construct generations from queue
+leases, timestamps, or process counters. A higher accepted reservation fences a
+paused older writer. It does not undo a write that already committed before the
+reservation. Queue lease expiry alone never fences backend mutation.
+
+Compute `MemoryPayloadHash` from the exact content and application metadata,
+then include it in `MemoryWrite`. The public boundary rejects malformed hashes,
+key mismatches, and missing fences before publication; storage rechecks the
+current fence under its mutation/commit lock. Supported operations honor context
+cancellation, but a canceled or lost response around commit is ambiguous: call
+`ReconcileMemory` with the same key before retrying. `absent` means no saved
+identity exists; `preparing` is recoverable work, `saved` validates the manifest,
+and `deleted` is absorbing. Never respond to ambiguity by changing the key or
+falling back to Upload. Saved-data corruption returns `ErrMemoryCorrupt`, not
+permission to regenerate missing data.
+
+The queue and backend handoff is not an atomic cross-database transaction.
+Consumers requiring atomic claim/backend handoff must use an explicitly shared
+PostgreSQL transaction integration or block that integration; this API does not
+provide such a transaction seam. Reject stale queue owners before letting them
+request a new backend reservation.
+
 ## Chromem implementation status and limits
 
-The internal chromem Begin/Write/Reconcile protocol is implemented and tested,
-including interrupted-write recovery. It is not yet exposed as a supported
-public memory capability: all public capability flags remain false until final
-contract acceptance, including exact deletion. Internal exact deletion and tombstone recovery are
-implemented as described below; public acceptance remains a separate gate.
+Public `PersistentKB` Begin/Write/Reconcile/Delete dispatch to the lifetime-owned
+chromem journal adapter, including interrupted-write and tombstone recovery.
+The engine alone is not the complete journal API: use `PersistentKB` for memory.
 
 Chromem takes a nonblocking exclusive OS advisory file lock on
 `<vector-root>/.owner.lock` before loading or repairing its database. The lock is
@@ -182,14 +215,13 @@ or arbitrary corruption. In particular, chromem collection metadata and its
 initial directory creation retain upstream persistence behavior; the tests do
 not simulate loss of operating-system caches or storage write reordering.
 Legacy uploads retain their existing durability semantics, not this journal
-protocol. Full public contract acceptance remains separate work.
+protocol.
 
 ## PostgreSQL ingestion implementation status
 
-The internal PostgreSQL Begin/Write/Reconcile protocol is implemented. Public
-`PersistentKB` memory mutation methods and capability flags remain disabled
-until the complete contract acceptance gate passes. Internal exact deletion
-and tombstones are implemented; the raw-vector API is unchanged.
+Public `PersistentKB` Begin/Write/Reconcile/Delete dispatch to PostgreSQL's
+durable protocol. Public writes freeze the knowledge base's chunk size and
+overlap in the manifest. The raw-vector API is unchanged.
 
 A shared `localrecall_memory_v1` row reserves each collection/key with an owner
 and monotonically increasing generation. A row lock serializes reservations and
@@ -252,16 +284,13 @@ power-loss durability or exhaustive network-fault simulation.
 
 ## Exact deletion and non-recreation
 
-The internal deletion adapter implements the exact local deletion boundary
-for chromem and PostgreSQL. Public `PersistentKB.DeleteMemoryEntry` still
-returns typed `ErrMemoryUnsupported` before validation or effects, just like
-Begin/Write/Reconcile. Public capability flags remain false until the final
-consumer contract gate.
+Public `PersistentKB.DeleteMemoryEntry` implements the exact deletion boundary
+for supported chromem and PostgreSQL stores. Unsupported engines fail closed.
 Supply the complete `directory/filename` parent ID. Basenames, wildcard syntax,
 backslashes, dot segments, and path traversal are rejected as not found without
 fallback. `RemoveEntry` routes memory parent IDs ending in `/memory.txt` through
 this boundary. Other legacy `RemoveEntry` behavior is unchanged. Exact legacy
-deletion is also available through the internal exact adapter; it does not create a
+deletion is also available through this public exact boundary; it does not create a
 memory tombstone, so a repeated legacy delete returns `ErrMemoryNotFound`.
 
 Chromem serializes deletion with Begin/Write/Reconcile under root ownership.
@@ -277,7 +306,7 @@ PostgreSQL locks the shared memory row and commits source-chunk removal and the
 content-free tombstone in one transaction. It serializes with publication and
 takeover. Other replicas read that tombstone without local assets. A stale local
 asset is hidden by the authoritative tombstone. Local filesystem cleanup errors
-are returned, not reported as completed deletion; retry internal exact deletion on
+are returned, not reported as completed deletion; retry `DeleteMemoryEntry` on
 the replica with that cache to finish cleanup. PostgreSQL reconciliation returns
 the durable database receipt, not proof that every replica's private cache has
 been physically removed. The backend cannot discover another replica's files.
@@ -310,3 +339,29 @@ applies, including transactional boundary subtests; zero tests, incomplete
 execution, missing required names, and any skip event fail. The fixture-free
 Python tests exercise these rejection paths with synthetic events; only the
 real fixture commands establish engine acceptance.
+
+## Complete consumer acceptance gate
+
+With the owned fixture described above running, derive its URL by inspection
+rather than copying an IP address. From the repository root:
+
+```sh
+container=${MEMORY_DATABASE_CONTAINER:-localrecall-memory-task3}
+ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")
+export MEMORY_DATABASE_CONTAINER="$container"
+export MEMORY_DATABASE_URL="postgres://postgres@$ip:5433/postgres?sslmode=disable"
+# Optionally set TMPDIR and GOTMPDIR to an existing writable scratch directory.
+sh test/memory/verify.sh
+```
+
+The runner uses existing Go dependencies with module networking disabled and
+`GOMAXPROCS=2`. All targeted Go tests use `-race -count=1 -p 2`. It runs the
+strict PostgreSQL ingestion and deletion gates, all named memory suites including
+the same public consumer contract against both actual engines, and the legacy
+raw contract. JSON checks reject failures, zero tests, skips, incomplete runs,
+and missing required names; Ginkgo skipped-spec counts are rejected as well.
+Deterministic local embedding servers require no model downloads. Existing
+real-engine fault helpers cover process ownership, crash boundaries, transaction
+rollback, receipt loss, and tombstone recovery; the public contract is not a
+mock substitute for those tests. This targeted gate does not claim that unrelated
+integration suites or arbitrary storage/network failures have been verified.

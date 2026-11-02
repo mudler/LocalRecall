@@ -1,0 +1,50 @@
+{
+  "rag": [
+    "TestMemoryChromemApplicationCollections",
+    "TestMemoryChromemCrashRecovery",
+    "TestMemoryChromemLegacyCoexistence",
+    "TestMemoryChromemOwnership",
+    "TestMemoryChromemPersistenceFailures",
+    "TestMemoryChromemProcess",
+    "TestMemoryChromemReplay",
+    "TestMemoryContractConsumer",
+    "TestMemoryContractErrorsAndStates",
+    "TestMemoryContractIdentity",
+    "TestMemoryContractPayload",
+    "TestMemoryContractUnsupported",
+    "TestMemoryDeleteChromemCleanupFailure",
+    "TestMemoryDeleteChromemCrashRecovery",
+    "TestMemoryDeleteChromemExact",
+    "TestMemoryDeleteChromemLegacyExact",
+    "TestMemoryDeleteChromemProcess",
+    "TestMemoryDeleteChromemRace",
+    "TestMemoryDeletePostgresAssetCleanupAndLegacy",
+    "TestMemoryPostgresReplicaWithoutAssets"
+  ],
+  "rag/engine": [
+    "TestMemoryChromemPendingImageInterruptedOverwrite",
+    "TestMemoryChromemPendingImageRejectsCorruption",
+    "TestMemoryChromemSharedRoot",
+    "TestMemoryChromemSharedRootTransactions",
+    "TestMemoryDeletePostgresExactReplayReplica",
+    "TestMemoryDeletePostgresMaintenanceReservation",
+    "TestMemoryDeletePostgresPausedWriter",
+    "TestMemoryDeletePostgresTransactionBoundaries",
+    "TestMemoryDeletePostgresWriteTakeover",
+    "TestMemoryPostgresCommitConnectionLoss",
+    "TestMemoryPostgresConcurrentInitialization",
+    "TestMemoryPostgresConcurrentSameFence",
+    "TestMemoryPostgresCorruptPreparing",
+    "TestMemoryPostgresDurable",
+    "TestMemoryPostgresEmbeddingFailure",
+    "TestMemoryPostgresLegacyMigration",
+    "TestMemoryPostgresLogicalIdentity",
+    "TestMemoryPostgresReplayConflictAndReopen",
+    "TestMemoryPostgresRollbackEachChunk",
+    "TestMemoryPostgresStaleDuringEmbedding",
+    "TestMemoryPostgresTwoPoolsReservations"
+  ],
+  "test/raw": [
+    "TestLegacyContract"
+  ]
+}

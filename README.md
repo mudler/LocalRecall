@@ -27,6 +27,23 @@ The PostgreSQL-only `/api/raw/v1` API stores caller-supplied vectors without inv
 It supports vector, BM25, and hybrid retrieval in a namespace separate from legacy collections.
 See the [raw vector API guide](docs/raw-vector-api.md) for deployment, request examples, consistency limits, and verification.
 
+## In-process agent memory
+
+Go consumers can use the optional `rag.PersistentKB` memory API for stable,
+collection-scoped identities, immutable payload hashes, durable receipts,
+backend-issued fences, recovery, and exact deletion with tombstones. PostgreSQL
+supports distributed consumers; chromem is limited to a single lifetime owner
+on a local filesystem and does **not** support distributed fencing. The LocalAI
+RAG storage engine and unknown/custom engines explicitly report unsupported.
+
+Check `MemoryCapabilities` before using `BeginMemoryAttempt`, `WriteMemory`,
+`ReconcileMemory`, or `DeleteMemoryEntry`. Queue leases alone do not fence writes.
+This additive Go API does not extend the mandatory `rag.Engine` interface, change
+legacy Upload semantics, or add remote HTTP memory endpoints. See the
+[agent memory backend guide](docs/agent-memory-backend.md) for the canonical hash
+encoding, claim/fence handoff, errors, recovery states, engine limits, and the
+model-download-free `sh test/memory/verify.sh` acceptance gate.
+
 ## 📚🆕 Local Stack Family
 
 🆕 LocalAI is now part of a comprehensive suite of AI tools designed to work together:

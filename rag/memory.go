@@ -101,33 +101,81 @@ func ValidateMemoryWrite(w MemoryWrite) error {
 	}
 	return nil
 }
+
+// Only accepted concrete adapters are enabled. An unknown Engine advertising a
+// similarly named method cannot opt itself into this durability contract.
 func (p *PersistentKB) MemoryCapabilities(ctx context.Context) (MemoryCapabilities, error) {
 	if p != nil {
-		if provider, ok := p.Engine.(interface {
-			MemoryCapabilities(context.Context) (MemoryCapabilities, error)
-		}); ok {
-			caps, err := provider.MemoryCapabilities(ctx)
-			if err != nil {
-				return MemoryCapabilities{}, err
-			}
-			// No engine is enabled until its complete durability gates pass.
-			return MemoryCapabilities{Reason: caps.Reason}, nil
+		switch c := p.Engine.(type) {
+		case *engine.ChromemDB:
+			return c.MemoryCapabilities(ctx)
+		case *engine.PostgresDB:
+			return c.MemoryCapabilities(ctx)
 		}
 	}
-	return MemoryCapabilities{Reason: "engine does not implement the optional memory protocol"}, nil
+	return MemoryCapabilities{Reason: "engine does not implement the accepted memory protocol"}, nil
 }
 func memoryUnsupported(op string) error {
 	return &MemoryError{Kind: ErrMemoryUnsupported, Op: op, Detail: "durable memory protocol is not enabled"}
 }
+func (p *PersistentKB) memoryReady(ctx context.Context, op string) error {
+	caps, err := p.MemoryCapabilities(ctx)
+	if !caps.Supported {
+		return memoryUnsupported(op)
+	}
+	if err != nil {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if !caps.Ready {
+		return memoryUnsupported(op)
+	}
+	return nil
+}
 func (p *PersistentKB) BeginMemoryAttempt(ctx context.Context, key, owner string) (MemoryFence, error) {
-	return MemoryFence{}, memoryUnsupported("begin")
+	if err := p.memoryReady(ctx, "begin"); err != nil {
+		return MemoryFence{}, err
+	}
+	if key == "" || owner == "" {
+		return MemoryFence{}, &MemoryError{Kind: ErrMemoryConflict, Op: "begin", Detail: "empty key or owner"}
+	}
+	if pg, ok := p.Engine.(*engine.PostgresDB); ok {
+		return pg.BeginMemoryAttempt(ctx, key, owner)
+	}
+	return p.beginChromemMemory(ctx, key, owner)
 }
 func (p *PersistentKB) WriteMemory(ctx context.Context, fence MemoryFence, write MemoryWrite) (MemoryReceipt, error) {
-	return MemoryReceipt{}, memoryUnsupported("write")
+	if err := p.memoryReady(ctx, "write"); err != nil {
+		return MemoryReceipt{}, err
+	}
+	if err := ValidateMemoryWrite(write); err != nil {
+		return MemoryReceipt{}, err
+	}
+	if fence.Key != write.Key {
+		return MemoryReceipt{}, &MemoryError{Kind: ErrMemoryConflict, Op: "write", Detail: "key mismatch"}
+	}
+	if fence.Generation == 0 || fence.Owner == "" {
+		return MemoryReceipt{}, &MemoryError{Kind: ErrMemoryStaleFence, Op: "write", Detail: "missing reservation"}
+	}
+	if pg, ok := p.Engine.(*engine.PostgresDB); ok {
+		return pg.WriteMemoryWithOptions(ctx, fence, write, p.maxChunkSize, p.chunkOverlap)
+	}
+	return p.writeChromemMemory(ctx, fence, write)
 }
 func (p *PersistentKB) ReconcileMemory(ctx context.Context, key string) (MemoryReceipt, error) {
-	return MemoryReceipt{}, memoryUnsupported("reconcile")
+	if err := p.memoryReady(ctx, "reconcile"); err != nil {
+		return MemoryReceipt{}, err
+	}
+	if pg, ok := p.Engine.(*engine.PostgresDB); ok {
+		return pg.ReconcileMemory(ctx, key)
+	}
+	return p.reconcileChromemMemory(ctx, key)
 }
 func (p *PersistentKB) DeleteMemoryEntry(ctx context.Context, entryID string) (MemoryReceipt, error) {
-	return MemoryReceipt{}, memoryUnsupported("delete")
+	if err := p.memoryReady(ctx, "delete"); err != nil {
+		return MemoryReceipt{}, err
+	}
+	return p.deleteMemoryEntry(ctx, entryID)
 }
