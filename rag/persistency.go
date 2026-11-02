@@ -30,6 +30,7 @@ type CollectionState struct {
 }
 
 type PersistentKB struct {
+	memoryHooks *memoryJournalHooks
 	Engine
 	sync.Mutex
 	path         string
@@ -71,7 +72,14 @@ func loadDB(path string) (*CollectionState, error) {
 	return state, nil
 }
 
-func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize, chunkOverlap int, llmClient *openai.Client, embeddingModel string) (*PersistentKB, error) {
+func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChunkSize, chunkOverlap int, llmClient *openai.Client, embeddingModel string) (result *PersistentKB, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			if c, ok := store.(interface{ Close() }); ok {
+				c.Close()
+			}
+		}
+	}()
 	// if file exists, try to load an existing state
 	// if file does not exist, create a new state
 	if err := os.MkdirAll(assetDir, 0755); err != nil {

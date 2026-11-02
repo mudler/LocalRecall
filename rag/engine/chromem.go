@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
+	"sync"
 
 	"github.com/mudler/localrecall/rag/types"
 	"github.com/philippgille/chromem-go"
@@ -11,6 +13,10 @@ import (
 )
 
 type ChromemDB struct {
+	lifetime        *os.File
+	root            string
+	memoryMu        sync.Mutex
+	closed          bool
 	collectionName  string
 	collection      *chromem.Collection
 	index           int
@@ -20,6 +26,19 @@ type ChromemDB struct {
 }
 
 func NewChromemDBCollection(collection, path string, openaiClient *openai.Client, embeddingsModel string) (*ChromemDB, error) {
+	lock, err := lockChromem(path)
+	if err != nil {
+		return nil, err
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = lock.Close()
+		}
+	}()
+	if err := repairChromemPending(path); err != nil {
+		return nil, err
+	}
 	db, err := chromem.NewPersistentDB(path, true)
 	if err != nil {
 		return nil, err
@@ -27,6 +46,8 @@ func NewChromemDBCollection(collection, path string, openaiClient *openai.Client
 
 	chromem := &ChromemDB{
 		collectionName:  collection,
+		lifetime:        lock,
+		root:            path,
 		index:           1,
 		db:              db,
 		client:          openaiClient,
@@ -44,6 +65,7 @@ func NewChromemDBCollection(collection, path string, openaiClient *openai.Client
 		chromem.index = count + 1
 	}
 
+	success = true
 	return chromem, nil
 }
 
@@ -70,12 +92,14 @@ func (c *ChromemDB) GetEmbeddingDimensions() (int, error) {
 		return 0, fmt.Errorf("no documents in collection")
 	}
 
-	doc, err := c.collection.GetByID(context.Background(), fmt.Sprint(count))
+	docs, err := c.memoryDocuments()
 	if err != nil {
-		return 0, fmt.Errorf("error getting document: %v", err)
+		return 0, err
 	}
-
-	return len(doc.Embedding), nil
+	for _, doc := range docs {
+		return len(doc.Embedding), nil
+	}
+	return 0, fmt.Errorf("no documents in collection")
 }
 
 func (c *ChromemDB) embedding() chromem.EmbeddingFunc {

@@ -119,3 +119,58 @@ provided by the currently unsupported adapters:
 repeated completed deletion should return the retained deleted receipt rather
 than treating its tombstone as absent. Unsupported takes precedence on disabled
 backends, even for invalid input. Never silently retry through legacy Upload.
+
+## Chromem implementation status and limits
+
+The internal chromem Begin/Write/Reconcile protocol is implemented and tested,
+including interrupted-write recovery. It is not yet exposed as a supported
+public memory capability: all public capability flags remain false until final
+contract acceptance, including exact deletion. PostgreSQL memory ingestion and
+memory tombstones are not implemented by this chromem work.
+
+Chromem takes a nonblocking exclusive OS advisory file lock on
+`<vector-root>/.owner.lock` before loading or repairing its database. The lock is
+held until Close (or process exit); another constructor using the same root is
+rejected, including for a different collection in that root. Constructor failures
+release ownership. Internal memory transactions and Close share an in-process
+mutex, so Close waits for an active memory transaction. This is single-owner,
+local-filesystem operation, not distributed fencing. The advisory lock requires
+cooperating processes: do not replace/unlink its file, bypass this constructor,
+or use shared/network filesystems. Legacy mutation methods do not participate
+in the memory transaction mutex; callers must not race them, Reset, or Close
+against memory operations or mutate memory-owned chunks/assets directly.
+
+Begin atomically replaces a journal reservation and advances its generation.
+Write checks the current owner/generation while holding the transaction mutex,
+rejects conflicting payloads before embedding, and persists a preparing manifest
+before writing the asset or chunks. The manifest freezes content, metadata,
+chunk settings, model, and deterministic chunk IDs. Journal and asset replacement
+uses a temporary file, file fsync, rename, and directory fsync; errors propagate
+instead of producing a successful receipt. Newly created journal/asset directory
+ancestors are also synced. A saved receipt is written only after the asset and
+all chunks have completed their persistence steps.
+
+Chromem itself overwrites document files non-atomically. Each memory upsert
+therefore first persists a complete normalized gzip/gob pending image using
+file fsync, atomic rename, and directory fsync. After chromem writes the document,
+the document file and its directory are synced before the pending image is
+removed and the directory synced again. On reopen, under exclusive ownership
+and before chromem loads documents, outstanding pending images repair interrupted
+persistent-file overwrites. Repair validates the full gzip stream and document
+filename identity before replacement; invalid images fail explicitly and remain
+available for diagnosis. This low-level replay completes only outstanding
+upserts; it does not reconstruct arbitrary missing saved documents.
+
+Reconcile repairs preparing entries using their persisted manifests, retaining
+identity across retries and changed chunk defaults. Saved entries are validated;
+missing or changed saved assets/chunks are corruption, not permission to
+re-embed. These guarantees cover process interruption on a cooperating local
+filesystem, with SIGKILL tests at intent, asset, chunk, and receipt boundaries
+and deterministic engine tests for truncated persistent-document overwrites.
+They do **not** establish survival of power loss, filesystem/hardware faults,
+or arbitrary corruption. In particular, chromem collection metadata and its
+initial directory creation retain upstream persistence behavior; the tests do
+not simulate loss of operating-system caches or storage write reordering.
+Legacy uploads retain their existing durability semantics, not this journal
+protocol. Memory deletion, tombstone recovery, and full public acceptance remain
+separate work.
