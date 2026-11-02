@@ -98,6 +98,9 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 		}
 		persistentKB.Lock()
 		defer persistentKB.Unlock()
+		if e := persistentKB.recoverMemoryDeletes(); e != nil {
+			return nil, e
+		}
 		return persistentKB, persistentKB.save()
 	}
 
@@ -112,6 +115,10 @@ func NewPersistentCollectionKB(stateFile, assetDir string, store Engine, maxChun
 		chunkOverlap: chunkOverlap,
 		assetDir:     assetDir,
 		sources:      state.ExternalSources,
+	}
+
+	if e := db.recoverMemoryDeletes(); e != nil {
+		return nil, e
 	}
 
 	// Migrate flat files in assetDir (files not in UUID subdirectories) to UUID layout.
@@ -161,7 +168,11 @@ func (db *PersistentKB) listDocumentKeys() []string {
 		}
 		for _, sub := range subEntries {
 			if !sub.IsDir() {
-				keys = append(keys, filepath.Join(uuidDir, sub.Name()))
+				key := filepath.Join(uuidDir, sub.Name())
+				if db.memorySourceDeleted(key) {
+					continue
+				}
+				keys = append(keys, key)
 			}
 		}
 	}
@@ -200,16 +211,20 @@ func (db *PersistentKB) Search(s string, similarEntries int) ([]types.Result, er
 
 func (db *PersistentKB) Reset() error {
 	db.Lock()
-	os.RemoveAll(db.assetDir)
-	os.MkdirAll(db.assetDir, 0755)
-	db.sources = []*ExternalSource{}
-	db.save()
-	db.Unlock()
-	if err := db.Engine.Reset(); err != nil {
-		return err
-	}
-	os.RemoveAll(db.path)
-	return nil
+	defer db.Unlock()
+	return db.withMemoryMaintenance(func() error {
+		if err := db.Engine.Reset(); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(db.assetDir); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(db.assetDir, 0755); err != nil {
+			return err
+		}
+		db.sources = []*ExternalSource{}
+		return db.save()
+	})
 }
 
 func (db *PersistentKB) save() error {
@@ -259,7 +274,7 @@ func (db *PersistentKB) Repopulate() error {
 	db.Lock()
 	defer db.Unlock()
 
-	return db.repopulate()
+	return db.withMemoryMaintenance(db.repopulate)
 }
 
 // ListDocuments returns the list of documents in the knowledge base.
@@ -502,6 +517,11 @@ func (db *PersistentKB) store(metadata map[string]string, indexKeys ...string) (
 }
 
 func (db *PersistentKB) RemoveEntry(entry string) error {
+	if strings.HasSuffix(entry, "/memory.txt") {
+		_, e := db.deleteMemoryEntry(context.Background(), entry)
+		return e
+	}
+
 	db.Lock()
 	defer db.Unlock()
 
@@ -543,11 +563,13 @@ func (db *PersistentKB) removeFileEntry(entry string) error {
 		return db.save()
 	}
 
-	// Remove the file and its UUID subdir
-	os.RemoveAll(filepath.Join(db.assetDir, filepath.Dir(key)))
-
-	// TODO: this is suboptimal, but currently chromem does not support deleting single entities
-	return db.repopulate()
+	return db.withMemoryMaintenance(func() error {
+		// Check memory ownership before any filesystem mutation, not just rebuild.
+		if err := os.RemoveAll(filepath.Join(db.assetDir, filepath.Dir(key))); err != nil {
+			return err
+		}
+		return db.repopulate()
+	})
 }
 
 func copyFile(src, dst string) error {

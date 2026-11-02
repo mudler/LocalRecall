@@ -25,18 +25,4 @@ status=0
 go test -json "$@" >"$log" 2>&1 || status=$?
 cat "$log"
 [ "$status" -eq 0 ] || exit "$status"
-python3 - "$log" <<'PY'
-import json, sys
-runs=set(); passes=set(); packages=set()
-for line in open(sys.argv[1]):
-    try: e=json.loads(line)
-    except ValueError: continue
-    action=e.get('Action'); name=e.get('Test','')
-    if action=='skip': sys.exit('skipped test/package is not acceptance')
-    if name.startswith('TestMemoryPostgres'):
-        key=(e['Package'],name)
-        if action=='run': runs.add(key)
-        if action=='pass': passes.add(key); packages.add(e['Package'])
-if not runs or runs != passes: sys.exit('zero or incomplete memory tests')
-print('Executed %d real PostgreSQL tests/subtests across %d packages; no skips' % (len(passes), len(packages)))
-PY
+python3 "$(dirname "$0")/check_events.py" "$log" "${MEMORY_TEST_PREFIX-}" "$@"

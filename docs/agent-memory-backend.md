@@ -125,8 +125,8 @@ backends, even for invalid input. Never silently retry through legacy Upload.
 The internal chromem Begin/Write/Reconcile protocol is implemented and tested,
 including interrupted-write recovery. It is not yet exposed as a supported
 public memory capability: all public capability flags remain false until final
-contract acceptance, including exact deletion. PostgreSQL memory ingestion and
-memory tombstones are not implemented by this chromem work.
+contract acceptance, including exact deletion. Internal exact deletion and tombstone recovery are
+implemented as described below; public acceptance remains a separate gate.
 
 Chromem takes a nonblocking exclusive OS advisory file lock on
 `<vector-root>/.owner.lock` before loading or repairing its database. The lock is
@@ -145,9 +145,10 @@ Close waits for that handle's active memory transaction and a closed handle
 cannot begin another. This is single-owner,
 local-filesystem operation, not distributed fencing. The advisory lock requires
 cooperating processes: do not replace/unlink its file, bypass this constructor,
-or use shared/network filesystems. Legacy mutation methods do not participate
-in the memory transaction mutex; callers must not race them, Reset, or Close
-against memory operations or mutate memory-owned chunks/assets directly.
+or use shared/network filesystems. Reset and repopulation serialize with memory operations and fail with
+`ErrMemoryConflict` once any reservation or tombstone exists. Direct engine
+mutation and legacy Store do not participate in this protocol; do not use them
+to mutate memory-owned chunks/assets or race them against memory operations.
 
 Begin atomically replaces a journal reservation and advances its generation.
 Write checks the current owner/generation while holding the transaction mutex,
@@ -181,15 +182,14 @@ or arbitrary corruption. In particular, chromem collection metadata and its
 initial directory creation retain upstream persistence behavior; the tests do
 not simulate loss of operating-system caches or storage write reordering.
 Legacy uploads retain their existing durability semantics, not this journal
-protocol. Memory deletion, tombstone recovery, and full public acceptance remain
-separate work.
+protocol. Full public contract acceptance remains separate work.
 
 ## PostgreSQL ingestion implementation status
 
 The internal PostgreSQL Begin/Write/Reconcile protocol is implemented. Public
 `PersistentKB` memory mutation methods and capability flags remain disabled
-until exact deletion and the complete contract acceptance gate are implemented.
-This work does not implement tombstones or change the raw-vector API.
+until the complete contract acceptance gate passes. Internal exact deletion
+and tombstones are implemented; the raw-vector API is unchanged.
 
 A shared `localrecall_memory_v1` row reserves each collection/key with an owner
 and monotonically increasing generation. A row lock serializes reservations and
@@ -215,8 +215,10 @@ recognize saved database-backed parents on another replica with empty local
 assets. Parent lookup is exact; `memory.txt` is not a parent identity.
 `GetEntryFilePath` does not fabricate a local file for a database-backed parent.
 The legacy list/bool APIs cannot expose database errors; callers needing typed
-errors should use the engine's exact `MemoryEntry` read. Do not race legacy
-Delete/Reset/repopulation or direct SQL mutation against memory operations.
+errors should use the engine's exact `MemoryEntry` read. Reset/repopulation refuse collections with any memory reservation, including
+tombstones. The maintenance check and callback hold a PostgreSQL advisory
+transaction lock; Begin holds that same lock through reservation commit. Direct
+engine Delete/Reset, legacy Store, and direct SQL are outside this protocol.
 
 ### Real PostgreSQL verification
 
@@ -247,3 +249,64 @@ reading parent content without local assets. Connection termination proves the
 aborted-commit recovery path; dropping a successful receipt separately proves
 recovery of an already committed publication. These tests are not a claim of
 power-loss durability or exhaustive network-fault simulation.
+
+## Exact deletion and non-recreation
+
+The internal deletion adapter implements the exact local deletion boundary
+for chromem and PostgreSQL. Public `PersistentKB.DeleteMemoryEntry` still
+returns typed `ErrMemoryUnsupported` before validation or effects, just like
+Begin/Write/Reconcile. Public capability flags remain false until the final
+consumer contract gate.
+Supply the complete `directory/filename` parent ID. Basenames, wildcard syntax,
+backslashes, dot segments, and path traversal are rejected as not found without
+fallback. `RemoveEntry` routes memory parent IDs ending in `/memory.txt` through
+this boundary. Other legacy `RemoveEntry` behavior is unchanged. Exact legacy
+deletion is also available through the internal exact adapter; it does not create a
+memory tombstone, so a repeated legacy delete returns `ErrMemoryNotFound`.
+
+Chromem serializes deletion with Begin/Write/Reconcile under root ownership.
+It persists a deleted intent before removing chunks and the exact asset, then
+persists the completed receipt. The intent removes text, metadata, and the
+preparing chunk manifest; chunk IDs remain only until cleanup finishes. Cleanup
+removes pending upsert images as well, so reopen cannot replay deleted chunks.
+Startup and reconciliation finish interrupted cleanup. Deleted sources are
+hidden from reads even while cleanup is pending. Complete tombstones retain
+identity, hash, fence, and receipt version/state, not deleted content.
+
+PostgreSQL locks the shared memory row and commits source-chunk removal and the
+content-free tombstone in one transaction. It serializes with publication and
+takeover. Other replicas read that tombstone without local assets. A stale local
+asset is hidden by the authoritative tombstone. Local filesystem cleanup errors
+are returned, not reported as completed deletion; retry internal exact deletion on
+the replica with that cache to finish cleanup. PostgreSQL reconciliation returns
+the durable database receipt, not proof that every replica's private cache has
+been physically removed. The backend cannot discover another replica's files.
+
+For both engines, same-hash writes after deletion return the deleted receipt;
+a different hash conflicts. A newer fence does not revive a deleted entry.
+Reset/repopulation refuse all memory state rather than rebuilding immutable
+manifests from assets. Do not bypass this guard through direct engine methods.
+Filesystem errors propagate, including asset unlink and directory-sync errors.
+Process interruption tests do not establish power-loss durability.
+
+### Deletion verification
+
+Use the same disposable fixture as the ingestion gate:
+
+```sh
+ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' localrecall-memory-task3)
+export MEMORY_DATABASE_URL="postgres://postgres@$ip:5433/postgres?sslmode=disable"
+go test -p 2 -race -count=1 ./rag -run '^TestMemoryDeleteChromem' &&
+  sh test/memory/database.sh go test -p 2 -race -count=1 \
+  ./rag ./rag/engine -run '^TestMemoryDeletePostgres'
+python3 test/memory/check_events_test.py
+```
+
+With `MEMORY_TEST_PREFIX` unset, the runner recognizes only the exact selectors
+`^TestMemoryPostgres` and `^TestMemoryDeletePostgres` (`-run VALUE` or
+`-run=VALUE`). An explicit prefix must agree with the selector. Missing,
+combined, or repeated selectors fail closed. The required test manifest still
+applies, including transactional boundary subtests; zero tests, incomplete
+execution, missing required names, and any skip event fail. The fixture-free
+Python tests exercise these rejection paths with synthetic events; only the
+real fixture commands establish engine acceptance.

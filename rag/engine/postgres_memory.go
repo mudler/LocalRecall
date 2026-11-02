@@ -108,9 +108,22 @@ func (p *PostgresDB) BeginMemoryAttempt(ctx context.Context, key, owner string) 
 	if e := p.memorySchema(ctx); e != nil {
 		return f, e
 	}
-	e := p.pool.QueryRow(ctx, `INSERT INTO localrecall_memory_v1(collection_name,memory_key,owner,generation) VALUES($1,$2,$3,1)
+	// Hold the same lock as maintenance until the reservation is committed.
+	// Schema initialization alone releases its lock before the first INSERT.
+	tx, e := p.pool.Begin(ctx)
+	if e != nil {
+		return f, e
+	}
+	defer tx.Rollback(context.Background())
+	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(719258039184)"); e != nil {
+		return f, e
+	}
+	e = tx.QueryRow(ctx, `INSERT INTO localrecall_memory_v1(collection_name,memory_key,owner,generation) VALUES($1,$2,$3,1)
  ON CONFLICT(collection_name,memory_key) DO UPDATE SET owner=excluded.owner,generation=localrecall_memory_v1.generation+1 RETURNING generation`, p.collectionName, key, owner).Scan(&f.Generation)
-	return f, e
+	if e != nil {
+		return f, e
+	}
+	return f, tx.Commit(ctx)
 }
 func (p *PostgresDB) memoryLocked(ctx context.Context, tx pgx.Tx, key string) (StorageMemoryFence, *postgresMemoryManifest, error) {
 	f := StorageMemoryFence{Key: key}
@@ -170,6 +183,9 @@ func (p *PostgresDB) WriteMemoryWithOptions(ctx context.Context, f StorageMemory
 		if m.Write.PayloadHash != w.PayloadHash {
 			return zero, StorageErrMemoryConflict
 		}
+		if m.Receipt.State == StorageMemoryDeleted {
+			return m.Receipt, nil
+		}
 		if m.Receipt.State == StorageMemorySaved {
 			if e = p.validateMemory(ctx, tx, m); e != nil {
 				return zero, e
@@ -225,6 +241,9 @@ func (p *PostgresDB) publishMemory(ctx context.Context, f StorageMemoryFence, m 
 	if current != f {
 		return zero, StorageErrMemoryStaleFence
 	}
+	if latest != nil && latest.Receipt.State == StorageMemoryDeleted {
+		return latest.Receipt, nil
+	}
 	if latest != nil && latest.Receipt.State == StorageMemorySaved {
 		if e = p.validateMemory(ctx, tx, latest); e != nil {
 			return zero, e
@@ -259,6 +278,12 @@ func (p *PostgresDB) publishMemory(ctx context.Context, f StorageMemoryFence, m 
 	return m.Receipt, nil
 }
 func (p *PostgresDB) validateMemoryManifest(m *postgresMemoryManifest) error {
+	if m.Receipt.State == StorageMemoryDeleted {
+		if !m.Receipt.Deleted || m.Write.Content != "" || len(m.Write.Metadata) != 0 || len(m.Chunks) != 0 || len(m.Receipt.ChunkIDs) != 0 || len(m.Write.PayloadHash) != 64 || m.Receipt.PayloadHash != m.Write.PayloadHash || m.Receipt.EntryID != postgresEntryID(p.collectionName, m.Write.Key) {
+			return StorageErrMemoryCorrupt
+		}
+		return nil
+	}
 	hash, e := postgresPayloadHash(m.Write.Content, m.Write.Metadata)
 	if e != nil || hash != m.Write.PayloadHash || m.Receipt.PayloadHash != hash || m.Receipt.Deleted || (m.Receipt.State != StorageMemoryPreparing && m.Receipt.State != StorageMemorySaved) || m.MaxSize <= 0 || m.Overlap < 0 || m.Overlap >= m.MaxSize || m.Model != p.embeddingsModel || m.Version != postgresMemoryVersion || m.Receipt.EntryID != postgresEntryID(p.collectionName, m.Write.Key) || len(m.Chunks) == 0 || len(m.Chunks) != len(m.Receipt.ChunkIDs) {
 		return StorageErrMemoryCorrupt
@@ -312,6 +337,9 @@ func (p *PostgresDB) ReconcileMemory(ctx context.Context, key string) (StorageMe
 	if e != nil {
 		return zero, e
 	}
+	if m.Receipt.State == StorageMemoryDeleted {
+		return m.Receipt, nil
+	}
 	if m.Receipt.State == StorageMemorySaved {
 		if e = p.validateMemory(ctx, tx, m); e != nil {
 			return zero, e
@@ -347,8 +375,49 @@ func (p *PostgresDB) MemoryContent(ctx context.Context, key string) (string, err
 	}
 	return m.Write.Content, nil
 }
-func (p *PostgresDB) DeleteMemoryEntry(context.Context, string) (StorageMemoryReceipt, error) {
-	return StorageMemoryReceipt{}, StorageErrMemoryUnsupported
+func (p *PostgresDB) DeleteMemoryEntry(ctx context.Context, id string) (StorageMemoryReceipt, error) {
+	var zero StorageMemoryReceipt
+	if e := p.memorySchema(ctx); e != nil {
+		return zero, e
+	}
+	tx, e := p.pool.Begin(ctx)
+	if e != nil {
+		return zero, e
+	}
+	defer tx.Rollback(context.Background())
+	var key string
+	e = tx.QueryRow(ctx, `SELECT memory_key FROM localrecall_memory_v1 WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2`, p.collectionName, id).Scan(&key)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return zero, StorageErrMemoryNotFound
+	}
+	if e != nil {
+		return zero, e
+	}
+	_, m, e := p.memoryLocked(ctx, tx, key)
+	if e != nil {
+		return zero, e
+	}
+	if m == nil {
+		return zero, StorageErrMemoryNotFound
+	}
+	if _, e = tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE metadata->>'source'=$1`, p.tableName), id); e != nil {
+		return zero, e
+	}
+	m.Receipt.State = StorageMemoryDeleted
+	m.Receipt.Deleted = true
+	m.Receipt.ChunkIDs = nil
+	m.Write = StorageMemoryWrite{Key: key, PayloadHash: m.Receipt.PayloadHash}
+	m.Chunks = nil
+	m.Model = ""
+	m.MaxSize = 0
+	m.Overlap = 0
+	if e = p.saveMemoryManifest(ctx, tx, key, m); e != nil {
+		return zero, e
+	}
+	if e = tx.Commit(ctx); e != nil {
+		return zero, e
+	}
+	return m.Receipt, nil
 }
 
 // MemoryEntries lists saved database-backed parents. Preparing intents remain
@@ -404,4 +473,40 @@ func (p *PostgresDB) MemoryEntry(ctx context.Context, entryID string) (string, S
 		return "", zero, e
 	}
 	return m.Write.Content, m.Receipt, nil
+}
+
+// MemorySourceDeleted also hides stale local caches after a committed delete.
+// Query errors fail closed rather than exposing potentially deleted text.
+func (p *PostgresDB) MemorySourceDeleted(ctx context.Context, id string) bool {
+	var present bool
+	if e := p.pool.QueryRow(ctx, `SELECT to_regclass('localrecall_memory_v1') IS NOT NULL`).Scan(&present); e != nil {
+		return true
+	}
+	if !present {
+		return false
+	}
+	var deleted bool
+	e := p.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM localrecall_memory_v1 WHERE collection_name=$1 AND manifest->'Receipt'->>'EntryID'=$2 AND manifest->'Receipt'->>'State'='deleted')`, p.collectionName, id).Scan(&deleted)
+	return e != nil || deleted
+}
+func (p *PostgresDB) WithMemoryMaintenance(ctx context.Context, fn func() error) error {
+	if e := p.memorySchema(ctx); e != nil {
+		return e
+	}
+	tx, e := p.pool.Begin(ctx)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback(context.Background())
+	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(719258039184)"); e != nil {
+		return e
+	}
+	var exists bool
+	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM localrecall_memory_v1 WHERE collection_name=$1)`, p.collectionName).Scan(&exists); e != nil {
+		return e
+	}
+	if exists {
+		return StorageErrMemoryConflict
+	}
+	return fn()
 }

@@ -181,10 +181,16 @@ func (c *ChromemDB) GetByID(id string) (types.Result, error) {
 		return types.Result{}, err
 	}
 
+	if c.MemorySourceDeleted(res.Metadata["source"]) {
+		return types.Result{}, StorageErrMemoryNotFound
+	}
 	return types.Result{ID: res.ID, Metadata: res.Metadata, Content: res.Content}, nil
 }
 
 func (c *ChromemDB) GetBySource(source string) ([]types.Result, error) {
+	if c.MemorySourceDeleted(source) {
+		return nil, nil
+	}
 	ctx := context.Background()
 	count := c.collection.Count()
 	if count == 0 {
@@ -201,6 +207,9 @@ func (c *ChromemDB) GetBySource(source string) ([]types.Result, error) {
 
 	var results []types.Result
 	for _, r := range res {
+		if c.MemorySourceDeleted(r.Metadata["source"]) {
+			continue
+		}
 		results = append(results, types.Result{
 			ID:       r.ID,
 			Metadata: r.Metadata,
@@ -219,6 +228,9 @@ func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error)
 	var results []types.Result
 
 	for _, r := range res {
+		if c.MemorySourceDeleted(r.Metadata["source"]) {
+			continue
+		}
 		results = append(results, types.Result{
 			ID:       r.ID,
 			Metadata: r.Metadata,

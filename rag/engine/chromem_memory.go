@@ -6,10 +6,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/gob"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -286,4 +289,51 @@ func (c *ChromemDB) memoryDocuments() (map[string]*chromem.Document, error) {
 }
 func (c *ChromemDB) MemoryJournalDirectory() string {
 	return filepath.Join(c.root, ".memory-v1", shortChromemHash(c.collectionName))
+}
+
+// DeleteMemorySource is called under lifetime transaction ownership. chromem's
+// delete removes all source chunks; directory sync makes those unlinks durable.
+func (c *ChromemDB) DeleteMemorySource(source string, ids ...string) error {
+	for _, id := range ids {
+		path := filepath.Join(c.root, shortChromemHash(c.collectionName), shortChromemHash(id)+".gob.gz")
+		if e := os.Remove(path); e != nil && !errors.Is(e, os.ErrNotExist) {
+			return e
+		}
+		if e := os.Remove(path + ".memory-pending"); e != nil && !errors.Is(e, os.ErrNotExist) {
+			return e
+		}
+	}
+	if err := c.collection.Delete(context.Background(), map[string]string{"source": source}, nil); err != nil {
+		return err
+	}
+	return syncChromemDir(filepath.Join(c.root, shortChromemHash(c.collectionName)))
+}
+
+// MemorySourceDeleted is fail-closed on a damaged journal directory. It also
+// hides chunks while a durable deletion intent is awaiting cleanup.
+func (c *ChromemDB) MemorySourceDeleted(source string) bool {
+	files, e := os.ReadDir(c.MemoryJournalDirectory())
+	if errors.Is(e, os.ErrNotExist) {
+		return false
+	}
+	if e != nil {
+		return true
+	}
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+		data, e := os.ReadFile(filepath.Join(c.MemoryJournalDirectory(), f.Name()))
+		if e != nil {
+			return true
+		}
+		var j struct{ Receipt StorageMemoryReceipt }
+		if json.Unmarshal(data, &j) != nil {
+			return true
+		}
+		if j.Receipt.EntryID == source && j.Receipt.Deleted {
+			return true
+		}
+	}
+	return false
 }

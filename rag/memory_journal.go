@@ -113,6 +113,13 @@ func (p *PersistentKB) readMemoryJournal(c *engine.ChromemDB, key string) (*memo
 	if j.Version != chromemManifestVersion || j.Fence.Key != key || j.Fence.Generation == 0 || j.Fence.Owner == "" {
 		return nil, memoryCorrupt("invalid reservation")
 	}
+	if j.Receipt.State == MemoryDeleted {
+		scope, _ := c.MemoryIdentity()
+		if !j.Receipt.Deleted || j.Write != nil || len(j.Chunks) != 0 || j.Receipt.EntryID != MemoryEntryID(scope, key) || len(j.Receipt.PayloadHash) != 64 {
+			return nil, memoryCorrupt("invalid tombstone")
+		}
+		return &j, nil
+	}
 	if j.Write == nil {
 		if j.Receipt.State != MemoryAbsent {
 			return nil, memoryCorrupt("missing manifest")
@@ -195,6 +202,13 @@ func (p *PersistentKB) writeChromemMemory(ctx context.Context, f MemoryFence, w 
 		if w.Key != f.Key {
 			return &MemoryError{Kind: ErrMemoryConflict, Op: "write", Detail: "key mismatch"}
 		}
+		if j.Receipt.Deleted {
+			if j.Receipt.PayloadHash != w.PayloadHash {
+				return ErrMemoryConflict
+			}
+			r, e = p.finishChromemDelete(c, j)
+			return e
+		}
 		if j.Write != nil {
 			if j.Receipt.PayloadHash != w.PayloadHash {
 				return &MemoryError{Kind: ErrMemoryConflict, Op: "write", Detail: "immutable payload mismatch"}
@@ -238,6 +252,10 @@ func (p *PersistentKB) reconcileChromemMemory(ctx context.Context, key string) (
 		}
 		j, e := p.readMemoryJournal(c, key)
 		if e != nil {
+			return e
+		}
+		if j.Receipt.Deleted {
+			r, e = p.finishChromemDelete(c, j)
 			return e
 		}
 		if j.Write == nil {
