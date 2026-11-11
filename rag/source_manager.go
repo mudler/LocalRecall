@@ -3,8 +3,10 @@ package rag
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,11 +22,16 @@ type ExternalSource struct {
 	LastUpdate     time.Time
 }
 
-// SourceManager manages external sources for collections
+type collectionSources struct {
+	mu         sync.Mutex // serializes refresh writes and removal for this collection
+	collection *PersistentKB
+	sources    []*ExternalSource
+}
+
+// SourceManager manages external sources for collections.
 type SourceManager struct {
-	sources     map[string][]*ExternalSource // collection name -> sources
-	collections map[string]*PersistentKB     // collection name -> collection
-	mu          sync.RWMutex
+	collections map[string]*collectionSources
+	mu          sync.RWMutex // protects only the collections map
 	ctx         context.Context
 	cancel      context.CancelFunc
 	config      *sources.Config
@@ -34,26 +41,43 @@ type SourceManager struct {
 func NewSourceManager(config *sources.Config) *SourceManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SourceManager{
-		sources:     make(map[string][]*ExternalSource),
-		collections: make(map[string]*PersistentKB),
+		collections: make(map[string]*collectionSources),
 		ctx:         ctx,
 		cancel:      cancel,
 		config:      config,
 	}
 }
 
-// RegisterCollection registers a collection with the source manager
-func (sm *SourceManager) RegisterCollection(name string, collection *PersistentKB) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.collections[name] = collection
+func (sm *SourceManager) registeredCollection(name string) *collectionSources {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.collections[name]
+}
 
-	// Load existing sources from the collection
-	sources := collection.GetExternalSources()
-	for _, source := range sources {
-		sm.sources[name] = append(sm.sources[name], source)
-		// Trigger an immediate update for each source
-		go sm.updateSource(name, source, collection)
+// RegisterCollection registers a collection with the source manager.
+func (sm *SourceManager) RegisterCollection(name string, collection *PersistentKB) {
+	next := &collectionSources{collection: collection}
+	next.mu.Lock()
+	defer next.mu.Unlock()
+
+	sm.mu.Lock()
+	previous := sm.collections[name]
+	if previous != nil && previous.collection == collection {
+		sm.mu.Unlock()
+		return
+	}
+	sm.collections[name] = next
+	sm.mu.Unlock()
+
+	// A replaced registration cannot start new writes. Let any write already
+	// in progress finish before loading sources for the replacement.
+	if previous != nil {
+		previous.mu.Lock()
+		previous.mu.Unlock()
+	}
+	next.sources = collection.GetExternalSources()
+	for _, source := range next.sources {
+		go sm.updateSource(name, next, source)
 	}
 }
 
@@ -61,79 +85,81 @@ func (sm *SourceManager) RegisterCollection(name string, collection *PersistentK
 // the collection was deleted by another process.
 func (sm *SourceManager) UnregisterCollection(name string) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	previous := sm.collections[name]
 	delete(sm.collections, name)
-	delete(sm.sources, name)
+	sm.mu.Unlock()
+	if previous != nil {
+		// Wait for any store already in progress before the caller closes it.
+		previous.mu.Lock()
+		previous.mu.Unlock()
+	}
 }
 
-// AddSource adds a new external source to a collection
-func (sm *SourceManager) AddSource(collectionName, url string, updateInterval time.Duration) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	collection, exists := sm.collections[collectionName]
-	if !exists {
-		return fmt.Errorf("collection %s not found", collectionName)
+// AddSource adds a new external source to a collection.
+func (sm *SourceManager) AddSource(name, url string, updateInterval time.Duration) error {
+	state := sm.registeredCollection(name)
+	if state == nil {
+		return fmt.Errorf("collection %s not found", name)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if sm.registeredCollection(name) != state {
+		return fmt.Errorf("collection %s not found", name)
 	}
 
-	source := ExternalSource{
-		URL:            url,
-		UpdateInterval: updateInterval,
-		LastUpdate:     time.Now(),
-	}
-
-	// Add the source to the collection's persistent storage
-	if err := collection.AddExternalSource(&source); err != nil {
+	source := ExternalSource{URL: url, UpdateInterval: updateInterval, LastUpdate: time.Now()}
+	if err := state.collection.AddExternalSource(&source); err != nil {
 		return err
 	}
-
-	sm.sources[collectionName] = append(sm.sources[collectionName], &source)
-
-	// Trigger an immediate update
-	go sm.updateSource(collectionName, &source, collection)
-
+	scheduled := source
+	state.sources = append(state.sources, &scheduled)
+	go sm.updateSource(name, state, &scheduled)
 	return nil
 }
 
-// RemoveSource removes an external source from a collection
-func (sm *SourceManager) RemoveSource(collectionName, url string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	collection, exists := sm.collections[collectionName]
-	if !exists {
-		return fmt.Errorf("collection %s not found", collectionName)
+// RemoveSource removes an external source from a collection.
+func (sm *SourceManager) RemoveSource(name, url string) error {
+	state := sm.registeredCollection(name)
+	if state == nil {
+		return fmt.Errorf("collection %s not found", name)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if sm.registeredCollection(name) != state {
+		return fmt.Errorf("collection %s not found", name)
 	}
 
-	// Remove from collection's persistent storage
-	if err := collection.RemoveExternalSource(url); err != nil {
+	if err := state.collection.RemoveExternalSource(url); err != nil {
 		return err
 	}
-
-	if err := collection.RemoveEntry(fmt.Sprintf("source-%s-%s.txt", collectionName, sanitizeURL(url))); err != nil {
-		// Ignore error if entry doesn't exist — content may never have been fetched
+	// The subscription is gone even if removing the indexed data fails.
+	state.sources = slices.DeleteFunc(state.sources, func(source *ExternalSource) bool {
+		return source.URL == url
+	})
+	if err := state.collection.RemoveEntry(fmt.Sprintf("source-%s-%s.txt", name, sanitizeURL(url))); err != nil {
+		// Content may never have been fetched.
 		if !strings.Contains(err.Error(), "entry not found") {
 			return err
 		}
 	}
-
-	// Remove from in-memory sources
-	sources := sm.sources[collectionName]
-	for i, s := range sources {
-		if s.URL == url {
-			sm.sources[collectionName] = append(sources[:i], sources[i+1:]...)
-			break
-		}
-	}
-
 	return nil
 }
 
-// updateSource updates a single source
-func (sm *SourceManager) updateSource(collectionName string, source *ExternalSource, collection *PersistentKB) {
+// sourceRegistered checks registration identity with state.mu held. The
+// pointer comparison rejects an old refresh after the same URL is re-added.
+func (sm *SourceManager) sourceRegistered(name string, state *collectionSources, source *ExternalSource) bool {
+	return sm.registeredCollection(name) == state && slices.Contains(state.sources, source)
+}
 
-	// update LastUpdate
+func (sm *SourceManager) updateSource(name string, state *collectionSources, source *ExternalSource) {
+	state.mu.Lock()
+	if !sm.sourceRegistered(name, state, source) {
+		state.mu.Unlock()
+		return
+	}
 	source.LastUpdate = time.Now()
+	state.collection.markSourceRefresh(source.URL, source.LastUpdate)
+	state.mu.Unlock()
 
 	xlog.Info("Updating source", "url", source.URL)
 	content, err := sources.SourceRouter(source.URL, sm.config)
@@ -152,7 +178,7 @@ func (sm *SourceManager) updateSource(collectionName string, source *ExternalSou
 	// Use a consistent filename based on URL so StoreOrReplace can find existing entries
 	// But use a unique temp directory to avoid race conditions
 	sanitizedURL := sanitizeURL(source.URL)
-	fileName := fmt.Sprintf("source-%s-%s.txt", collectionName, sanitizedURL)
+	fileName := fmt.Sprintf("source-%s-%s.txt", name, sanitizedURL)
 
 	// Create a unique temp directory for this update to avoid race conditions
 	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("source-update-%d", time.Now().UnixNano()))
@@ -168,11 +194,19 @@ func (sm *SourceManager) updateSource(collectionName string, source *ExternalSou
 		return
 	}
 
+	// A removal can finish during the fetch. Hold only this collection's
+	// lock through the write so the result is stored before removal or discarded.
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !sm.sourceRegistered(name, state, source) {
+		return
+	}
+
 	xlog.Info("Storing content in collection", "tmpFile", tmpFile, "fileName", fileName, "content_length", len(content))
 
 	// Store the content in the collection
 	// StoreOrReplace will use filepath.Base to get fileName, which matches our consistent naming
-	if _, err := collection.StoreOrReplace(tmpFile, map[string]string{"url": source.URL}); err != nil {
+	if _, err := state.collection.StoreOrReplace(tmpFile, map[string]string{"url": source.URL}); err != nil {
 		xlog.Error("Error storing content in collection", "error", err)
 		return
 	}
@@ -228,15 +262,21 @@ func (sm *SourceManager) Start() {
 				return
 			case <-ticker.C:
 				sm.mu.RLock()
-				for collectionName, sources := range sm.sources {
-					collection := sm.collections[collectionName]
-					for _, source := range sources {
+				collections := maps.Clone(sm.collections)
+				sm.mu.RUnlock()
+				for name, state := range collections {
+					// An embedding write in one collection must not delay
+					// scheduling other collections. Revisit busy ones next tick.
+					if !state.mu.TryLock() {
+						continue
+					}
+					for _, source := range state.sources {
 						if time.Since(source.LastUpdate) >= source.UpdateInterval {
-							go sm.updateSource(collectionName, source, collection)
+							go sm.updateSource(name, state, source)
 						}
 					}
+					state.mu.Unlock()
 				}
-				sm.mu.RUnlock()
 			}
 		}
 	}()
