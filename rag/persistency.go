@@ -826,7 +826,23 @@ func (db *PersistentKB) migrateToUUIDLayout() error {
 func (db *PersistentKB) GetExternalSources() []*ExternalSource {
 	db.Lock()
 	defer db.Unlock()
-	return db.sources
+	snapshot := make([]*ExternalSource, 0, len(db.sources))
+	for _, source := range db.sources {
+		copy := *source
+		snapshot = append(snapshot, &copy)
+	}
+	return snapshot
+}
+
+func (db *PersistentKB) markSourceRefresh(url string, when time.Time) {
+	db.Lock()
+	defer db.Unlock()
+	for _, source := range db.sources {
+		if source.URL == url {
+			source.LastUpdate = when
+			return
+		}
+	}
 }
 
 // AddExternalSource adds an external source to the collection
