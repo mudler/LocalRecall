@@ -1055,7 +1055,59 @@ func buildScopedHybridSearchQuery(tableName, indexName string) string {
 	`, tableName, candidatePool, rrfK, strings.ReplaceAll(indexName, "'", "''"))
 }
 
+// buildScopedHybridSearchQueryFiltered is buildScopedHybridSearchQuery with an
+// additional metadata containment filter ($6::jsonb) on the final join, so only
+// documents whose metadata contains every filter entry are returned.
+func buildScopedHybridSearchQueryFiltered(tableName, indexName string) string {
+	candidatePool := fmt.Sprintf("GREATEST($5 * %d, %d)", hybridCandidateMultiplier, hybridCandidateFloor)
+	return fmt.Sprintf(`
+		WITH bm25_results AS (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY full_text <@> to_bm25query($1, '%[4]s')) AS rank
+			FROM %[1]s
+			ORDER BY full_text <@> to_bm25query($1, '%[4]s')
+			LIMIT %[2]s
+		),
+		vector_results AS (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $3::vector) AS rank
+			FROM %[1]s
+			WHERE embedding IS NOT NULL
+			ORDER BY embedding <=> $3::vector
+			LIMIT %[2]s
+		),
+		fused AS (
+			SELECT
+				COALESCE(b.id, v.id) AS id,
+				COALESCE($2::float8 / (%[3]d + b.rank), 0) + COALESCE($4::float8 / (%[3]d + v.rank), 0) AS similarity
+			FROM bm25_results b
+			FULL OUTER JOIN vector_results v ON b.id = v.id
+		)
+		SELECT
+			d.id::text,
+			COALESCE(d.title, '') as title,
+			d.content,
+			d.metadata,
+			f.similarity
+		FROM fused f
+		JOIN %[1]s d ON d.id = f.id AND d.metadata @> $6::jsonb
+		ORDER BY f.similarity DESC
+		LIMIT $5
+	`, tableName, candidatePool, rrfK, strings.ReplaceAll(indexName, "'", "''"))
+}
+
 func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error) {
+	return p.search(s, similarEntries, nil)
+}
+
+// SearchWithFilters restricts the hybrid search to rows whose JSONB metadata
+// contains every entry of where (AND semantics, via the @> containment operator).
+func (p *PostgresDB) SearchWithFilters(s string, similarEntries int, where map[string]string) ([]types.Result, error) {
+	if len(where) == 0 {
+		return p.Search(s, similarEntries)
+	}
+	return p.search(s, similarEntries, where)
+}
+
+func (p *PostgresDB) search(s string, similarEntries int, where map[string]string) ([]types.Result, error) {
 	ctx := context.Background()
 
 	// Get query embedding
@@ -1065,15 +1117,28 @@ func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error
 	}
 	queryEmbeddingStr := formatVector(queryEmbedding)
 
+	var filterJSON []byte
+	if len(where) > 0 {
+		filterJSON, err = json.Marshal(where)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal metadata filters: %w", err)
+		}
+	}
+
 	// Build hybrid search query (BM25 + vector similarity)
 	query := buildScopedHybridSearchQuery(p.tableName, p.scope.relation(p.indexBase("bm25")))
+	args := []interface{}{s, p.bm25Weight, queryEmbeddingStr, p.vectorWeight, similarEntries}
+	if filterJSON != nil {
+		query = buildScopedHybridSearchQueryFiltered(p.tableName, p.scope.relation(p.indexBase("bm25")))
+		args = append(args, string(filterJSON))
+	}
 
-	rows, err := p.pool.Query(ctx, query, s, p.bm25Weight, queryEmbeddingStr, p.vectorWeight, similarEntries)
+	rows, err := p.pool.Query(ctx, query, args...)
 	if err != nil {
 		// If BM25 query fails, fallback to vector-only search
 		xlog.Warn("BM25 search failed, falling back to vector search", "error", err)
 		query = fmt.Sprintf(`
-			SELECT 
+			SELECT
 				id::text,
 				COALESCE(title, '') as title,
 				content,
@@ -1084,7 +1149,23 @@ func (p *PostgresDB) Search(s string, similarEntries int) ([]types.Result, error
 			ORDER BY embedding <=> $1::vector
 			LIMIT $2
 		`, p.tableName)
-		rows, err = p.pool.Query(ctx, query, queryEmbeddingStr, similarEntries)
+		fallbackArgs := []interface{}{queryEmbeddingStr, similarEntries}
+		if filterJSON != nil {
+			query = fmt.Sprintf(`
+				SELECT
+					id::text,
+					COALESCE(title, '') as title,
+					content,
+					metadata,
+					(1 - (embedding <=> $1::vector)) as similarity
+				FROM %s
+				WHERE embedding IS NOT NULL AND metadata @> $3::jsonb
+				ORDER BY embedding <=> $1::vector
+				LIMIT $2
+			`, p.tableName)
+			fallbackArgs = append(fallbackArgs, string(filterJSON))
+		}
+		rows, err = p.pool.Query(ctx, query, fallbackArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute search: %w", err)
 		}

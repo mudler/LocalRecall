@@ -58,6 +58,43 @@ func (m *MockEngine) StoreDocuments(s []string, metadata map[string]string) ([]R
 	return results, nil
 }
 
+func (m *MockEngine) SearchWithFilters(s string, similarEntries int, where map[string]string) ([]types.Result, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var results []types.Result
+	for _, doc := range m.docs {
+		match := true
+		for k, v := range where {
+			if doc.Metadata[k] != v {
+				match = false
+				break
+			}
+		}
+		if match && strings.Contains(strings.ToLower(doc.Content), strings.ToLower(s)) {
+			results = append(results, doc)
+		}
+	}
+	if len(results) == 0 {
+		for _, doc := range m.docs {
+			match := true
+			for k, v := range where {
+				if doc.Metadata[k] != v {
+					match = false
+					break
+				}
+			}
+			if match {
+				results = append(results, doc)
+			}
+		}
+	}
+	if len(results) > similarEntries {
+		results = results[:similarEntries]
+	}
+	return results, nil
+}
+
 func (m *MockEngine) Search(s string, similarEntries int) ([]types.Result, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

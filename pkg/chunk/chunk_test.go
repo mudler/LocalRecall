@@ -127,3 +127,19 @@ var _ = Describe("Chunk", func() {
 		})
 	})
 })
+
+var _ = Describe("SplitIntoParagraphs", func() {
+	It("splits on blank lines and trims paragraphs", func() {
+		content := "first line\nsecond line\n\n\n  third paragraph  \n"
+		Expect(SplitIntoParagraphs(content)).To(Equal([]string{"first line\nsecond line", "third paragraph"}))
+	})
+
+	It("returns a single paragraph when there are no blank lines", func() {
+		Expect(SplitIntoParagraphs("one\ntwo\nthree")).To(Equal([]string{"one\ntwo\nthree"}))
+	})
+
+	It("returns no paragraphs for empty or whitespace-only content", func() {
+		Expect(SplitIntoParagraphs("")).To(BeEmpty())
+		Expect(SplitIntoParagraphs("  \n \n\t\n")).To(BeEmpty())
+	})
+})

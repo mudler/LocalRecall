@@ -209,6 +209,23 @@ func (db *PersistentKB) Search(s string, similarEntries int) ([]types.Result, er
 	return db.Engine.Search(s, similarEntries)
 }
 
+// SearchWithFilters behaves like Search but restricts results to chunks whose
+// metadata matches all entries of filters (AND semantics). Engines that do not
+// implement engine.FilteredSearcher return an error when filters are non-empty.
+func (db *PersistentKB) SearchWithFilters(s string, similarEntries int, filters map[string]string) ([]types.Result, error) {
+	db.Lock()
+	defer db.Unlock()
+
+	if len(filters) == 0 {
+		return db.Engine.Search(s, similarEntries)
+	}
+	fs, ok := db.Engine.(engine.FilteredSearcher)
+	if !ok {
+		return nil, fmt.Errorf("metadata filters are not supported by engine %T", db.Engine)
+	}
+	return fs.SearchWithFilters(s, similarEntries, filters)
+}
+
 func (db *PersistentKB) Reset() error {
 	db.Lock()
 	defer db.Unlock()
@@ -767,9 +784,25 @@ func chunkFile(fpath string, maxchunksize, chunkOverlap int) ([]string, error) {
 	}
 
 	opts := chunk.Options{MaxSize: maxchunksize, Overlap: chunkOverlap, SplitLongWords: true}
-	chunks := chunk.SplitParagraphIntoChunksWithOptions(content, opts)
+	var chunks []string
+	if paragraphChunkingEnabled() {
+		// Chunk each paragraph separately so chunk boundaries never cross a
+		// blank-line separator (e.g. one line per passage in mythological texts).
+		for _, para := range chunk.SplitIntoParagraphs(content) {
+			chunks = append(chunks, chunk.SplitParagraphIntoChunksWithOptions(para, opts)...)
+		}
+	} else {
+		chunks = chunk.SplitParagraphIntoChunksWithOptions(content, opts)
+	}
 	xlog.Info("Chunked file", "file", fpath, "content_length", len(content), "max_chunk_size", maxchunksize, "chunk_overlap", chunkOverlap, "chunk_count", len(chunks))
 	return chunks, nil
+}
+
+// paragraphChunkingEnabled reports whether files are chunked per paragraph
+// (blank-line separated) instead of as a single block. Enabled by default;
+// set CHUNK_BY_PARAGRAPH=false to restore the legacy single-block behavior.
+func paragraphChunkingEnabled() bool {
+	return os.Getenv("CHUNK_BY_PARAGRAPH") != "false"
 }
 
 // migrateToUUIDLayout migrates flat files in assetDir (files not in UUID

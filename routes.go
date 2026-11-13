@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -281,8 +282,9 @@ func search(collections collectionList) func(c echo.Context) error {
 		}
 
 		type request struct {
-			Query      string `json:"query"`
-			MaxResults int    `json:"max_results"`
+			Query      string            `json:"query"`
+			MaxResults int               `json:"max_results"`
+			Filters    map[string]string `json:"filters"`
 		}
 
 		r := new(request)
@@ -298,7 +300,7 @@ func search(collections collectionList) func(c echo.Context) error {
 			}
 		}
 
-		results, err := collection.Search(r.Query, r.MaxResults)
+		results, err := collection.SearchWithFilters(r.Query, r.MaxResults, r.Filters)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to search collection", err.Error()))
 		}
@@ -448,8 +450,24 @@ func uploadFile(collections collectionList, fileAssets string) func(c echo.Conte
 
 		now := time.Now().Format(time.RFC3339)
 
+		metadata := map[string]string{"created_at": now}
+		// Optional caller-supplied metadata (JSON object in the "metadata"
+		// form field), e.g. {"work": "Pyramid Texts", "lang": "fr", "form": "transliteration"}.
+		if raw := c.FormValue("metadata"); raw != "" {
+			extra := map[string]string{}
+			if err := json.Unmarshal([]byte(raw), &extra); err != nil {
+				return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid metadata", "metadata must be a JSON object of string values: "+err.Error()))
+			}
+			for k, v := range extra {
+				if k == "source" || k == "type" || k == "file_name" || strings.HasPrefix(k, "memory_") {
+					return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Reserved metadata key", fmt.Sprintf("metadata key %q is reserved", k)))
+				}
+				metadata[k] = v
+			}
+		}
+
 		// Save the file to disk
-		key, err := collection.Store(uploadPath, map[string]string{"created_at": now})
+		key, err := collection.Store(uploadPath, metadata)
 		if err != nil {
 			xlog.Error("Failed to store file", err)
 			return c.JSON(http.StatusInternalServerError, errorResponse(ErrCodeInternalError, "Failed to store file", err.Error()))

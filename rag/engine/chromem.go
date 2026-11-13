@@ -265,6 +265,10 @@ func (c *ChromemDB) GetBySource(source string) ([]types.Result, error) {
 }
 
 func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error) {
+	return c.SearchWithFilters(s, similarEntries, nil)
+}
+
+func (c *ChromemDB) SearchWithFilters(s string, similarEntries int, where map[string]string) ([]types.Result, error) {
 	// chromem rejects a query limit larger than the collection, including an
 	// empty collection after complete memory deletion.
 	if n := c.collection.Count(); similarEntries > n {
@@ -273,7 +277,7 @@ func (c *ChromemDB) Search(s string, similarEntries int) ([]types.Result, error)
 		}
 		similarEntries = n
 	}
-	res, err := c.query(context.Background(), s, similarEntries, nil)
+	res, err := c.query(context.Background(), s, similarEntries, where)
 	if err != nil {
 		return nil, err
 	}

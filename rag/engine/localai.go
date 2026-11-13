@@ -92,6 +92,12 @@ func (db *LocalAIRAGDB) GetBySource(source string) ([]types.Result, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
+// SearchWithFilters is unsupported: the LocalAI store find API has no metadata
+// filter, and filtering client-side would silently change the top-k semantics.
+func (db *LocalAIRAGDB) SearchWithFilters(s string, similarEntries int, where map[string]string) ([]types.Result, error) {
+	return nil, fmt.Errorf("metadata filters are not supported by the localai engine")
+}
+
 func (db *LocalAIRAGDB) Search(s string, similarEntries int) ([]types.Result, error) {
 	resp, err := db.openaiClient.CreateEmbeddings(context.TODO(),
 		openai.EmbeddingRequestStrings{

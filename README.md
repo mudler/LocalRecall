@@ -226,6 +226,7 @@ LocalRecall uses environment variables to configure its behavior. These variable
 | `VECTOR_ENGINE`             | Vector database engine to use (`chromem` by default, `postgres` for PostgreSQL).                              |
 | `MAX_CHUNKING_SIZE`         | Maximum size (in characters) for breaking down documents into chunks. Affects performance and accuracy.       |
 | `CHUNK_OVERLAP`             | Overlap in characters between consecutive chunks (word-aligned). Default: 0. Use to improve context across chunk boundaries. |
+| `CHUNK_BY_PARAGRAPH`        | When not `false` (default), files are chunked per blank-line-separated paragraph so chunk boundaries never cross a paragraph separator (e.g. one passage per line in mythological texts). Set to `false` for the legacy single-block chunking. |
 | `HYBRID_SEARCH_BM25_WEIGHT` | Weight for BM25 keyword search in hybrid search (default: 0.5, PostgreSQL only).                                 |
 | `HYBRID_SEARCH_VECTOR_WEIGHT` | Weight for vector similarity search in hybrid search (default: 0.5, PostgreSQL only).                           |
 | `POSTGRES_LOCK_TIMEOUT`     | Per-connection `lock_timeout` for the PostgreSQL engine (default: `30s`). Bounds how long a statement waits to acquire a lock so a single stuck operation cannot make every other statement on the table queue indefinitely. Set to `0`/`off` to disable. |
@@ -255,12 +256,15 @@ curl -X POST $BASE_URL/collections \
   -d '{"name":"myCollection"}'
 ```
 
-- **Upload File**:
+- **Upload File** (with optional JSON metadata attached to every chunk):
 
 ```sh
 curl -X POST $BASE_URL/collections/myCollection/upload \
-  -F "file=@/path/to/file.txt"
+  -F "file=@/path/to/file.txt" \
+  -F 'metadata={"work":"Pyramid Texts","lang":"fr","form":"transliteration"}'
 ```
+
+The `metadata` form field is a JSON object of string values. Keys `source`, `type`, `file_name` and `memory_*` are reserved and rejected.
 
 - **List Collections**:
 
@@ -290,13 +294,15 @@ curl -X GET $BASE_URL/collections/myCollection/entries/file.pdf/raw
 
 Returns the original uploaded binary file with the appropriate Content-Type header.
 
-- **Search Collection**:
+- **Search Collection** (with optional metadata filters, AND semantics):
 
 ```sh
 curl -X POST $BASE_URL/collections/myCollection/search \
   -H "Content-Type: application/json" \
-  -d '{"query":"search term", "max_results":5}'
+  -d '{"query":"search term", "max_results":5, "filters":{"lang":"fr","form":"gardiner"}}'
 ```
+
+Filters are supported by the `chromem` and `postgres` engines; the `localai` engine returns an error when `filters` is non-empty.
 
 - **Reset Collection**:
 

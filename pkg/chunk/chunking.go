@@ -177,6 +177,31 @@ func SplitParagraphIntoChunksWithOptions(paragraph string, opts Options) []strin
 	return chunks
 }
 
+// SplitIntoParagraphs splits content into paragraphs separated by one or more
+// blank lines. Each paragraph is trimmed; empty paragraphs are dropped.
+// A content without blank lines yields a single paragraph.
+func SplitIntoParagraphs(content string) []string {
+	raw := strings.Split(content, "\n")
+	var paragraphs []string
+	var current []string
+	flush := func() {
+		para := strings.TrimSpace(strings.Join(current, "\n"))
+		if para != "" {
+			paragraphs = append(paragraphs, para)
+		}
+		current = nil
+	}
+	for _, line := range raw {
+		if strings.TrimSpace(line) == "" {
+			flush()
+			continue
+		}
+		current = append(current, line)
+	}
+	flush()
+	return paragraphs
+}
+
 // SplitParagraphIntoChunks takes a paragraph and a maxChunkSize as input,
 // and returns a slice of strings where each string is a chunk of the paragraph
 // that is at most maxChunkSize long, ensuring that words are not split.
