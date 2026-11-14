@@ -191,6 +191,13 @@ func createCollection(collections collectionList, client *openai.Client, embeddi
 		// 201 so that existing clients, which check for it, keep working.
 		// A collection that another replica deleted is not "loaded": it is
 		// dropped here and created again below.
+		// Reject names that would let a request escape the configured state
+		// and asset directories: the name is joined into filesystem paths
+		// (collection-<name>.json and the per-collection asset dir).
+		if err := validateCollectionName(r.Name); err != nil {
+			return c.JSON(http.StatusBadRequest, errorResponse(ErrCodeInvalidRequest, "Invalid collection name", err.Error()))
+		}
+
 		if existing, _ := cachedCollection(collections, r.Name); existing != nil && stillExists(collections, r.Name, existing) {
 			return c.JSON(http.StatusCreated, successResponse("Collection created successfully", map[string]interface{}{
 				"name":       r.Name,
@@ -570,4 +577,22 @@ func listSources(collections collectionList) func(c echo.Context) error {
 		})
 		return c.JSON(http.StatusOK, response)
 	}
+}
+
+// validateCollectionName rejects collection names that are empty or that
+// contain path separators or parent references. The name is used to build
+// on-disk paths (the collection state file and the per-collection asset
+// directory), so an unchecked name such as "../../etc" would let a caller
+// read or write outside the configured directories (CWE-22).
+func validateCollectionName(name string) error {
+	if name == "" {
+		return fmt.Errorf("collection name must not be empty")
+	}
+	if name != filepath.Base(name) || name == "." || name == ".." {
+		return fmt.Errorf("collection name must not contain path separators or parent references")
+	}
+	if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+		return fmt.Errorf("collection name must not contain path separators or parent references")
+	}
+	return nil
 }
